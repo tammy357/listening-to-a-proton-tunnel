@@ -223,6 +223,20 @@ def _inner_wall_width(x_angstrom: np.ndarray, v_ev: np.ndarray, e0_ev: float) ->
     return right - left
 
 
+def test_two_level_gap_and_rx_populations() -> None:
+    """The first gap above the doublet is wide, and rx(2π t/T) tracks the wells."""
+
+    from src.atlas_tomography import level_ratios, population_errors
+
+    ratios = level_ratios()
+    for mass, ratio in ratios.items():
+        print(f"(E2 − E1) / ΔE {mass} = {ratio:.3f}")
+        assert ratio > 5.0, f"{mass} two-level ratio is {ratio}"
+    worst, _exact, _predicted = population_errors()
+    print(f"max |P_rx − P_exact| = {worst:.4f}")
+    assert worst < 0.02, f"RX acceptor error is {worst}"
+
+
 def test_ground_energy_and_wall_thickness_follow_mass() -> None:
     """Heavier isotopes sit lower in the well, so the barrier is thicker at E0."""
 
@@ -249,6 +263,24 @@ def test_ground_energy_and_wall_thickness_follow_mass() -> None:
     assert found["T"][1] > found["H"][1]
 
 
+def test_atlas_bank_is_an_aer_simulator() -> None:
+    """The saved tomography file is Aer, with the donor at z ≈ +1."""
+
+    import json
+
+    path = ROOT / "src" / "atlas_bank.json"
+    bank = json.loads(path.read_text(encoding="utf-8"))
+    assert bank["provider"] == "aer"
+    assert bank["backend"] == "automatic"
+    assert bank["execution"] == "simulator"
+    assert bank["shots"] == 4096
+    assert len(bank["points"]) == 24
+    assert len(bank["job_ids"]) == 24
+    first = bank["points"][0]
+    assert first["z"] > 0.5
+    assert abs(first["acceptor_population"] - (1.0 - first["z"]) / 2.0) < 1e-9
+
+
 if __name__ == "__main__":
     test_norm_is_preserved()
     test_symmetric_population_oscillates()
@@ -256,4 +288,6 @@ if __name__ == "__main__":
     report_reference_numbers()
     test_split_operator_circuit_matches_exact()
     test_ground_energy_and_wall_thickness_follow_mass()
+    test_two_level_gap_and_rx_populations()
+    test_atlas_bank_is_an_aer_simulator()
     print("all physics checks passed")

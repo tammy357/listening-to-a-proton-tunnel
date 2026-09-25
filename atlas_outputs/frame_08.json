@@ -1,0 +1,18 @@
+{
+  "engine": "telablur-v1",
+  "job_id": "1025af92-87cb-4a31-959c-aa5f5591086f",
+  "params": {
+    "strength": 0.8,
+    "size": 128,
+    "downscale": true,
+    "direction": "full"
+  },
+  "input_files": {
+    "image1": "donor.png",
+    "image2": "acceptor.png"
+  },
+  "mask": "omitted",
+  "strength_note": "strength is the teleportation-effect parameter (0 to 1): a selector-qubit rotation interpolates the images at the amplitude level. Output alpha is alpha1*(1-strength)+alpha2*strength. The schema does not define strength as a linear RGB morph fraction. The optional mask slot was not sent.",
+  "output_slot": "result",
+  "content_type": "image/png"
+}

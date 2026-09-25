@@ -1,12 +1,14 @@
 """Listening bench for isotope-dependent tunneling on an 8-qubit grid.
 
 Experience plays a precomputed exact movie for H, D, and T. Lab keeps the
-split-operator comparison, the rate sketch, and the QPAM player. Atlas is
-not connected until ``AtlasClient`` returns a real payload.
+split-operator comparison, the rate sketch, and the QPAM player. When
+``src/atlas_bank.json`` is present, tap-to-observe and the Bloch sphere use
+that Aer tomography run. Aer is a simulator.
 """
 
 from __future__ import annotations
 
+import base64
 import html
 import json
 from pathlib import Path
@@ -17,7 +19,6 @@ import streamlit as st
 import streamlit.components.v1 as components
 from qiskit import transpile
 
-from src.atlas_client import AtlasClient
 from src.hamiltonian import ANGSTROM_M, JOULE_PER_EV
 from src.moth_sonification import (
     DEFAULT_PITCH_HZ,
@@ -80,16 +81,24 @@ def _render_experience() -> None:
     template = root / "src" / "experience.html"
     data = root / "src" / "experience_data.json"
     bank = root / "src" / "bank.json"
+    atlas = root / "src" / "atlas_bank.json"
+    intro = root / "atlas_outputs"
+    intro_stamp = 0
+    if intro.exists():
+        for frame in intro.glob("frame_*.png"):
+            intro_stamp = max(intro_stamp, frame.stat().st_mtime_ns)
     stamp = (
         template.stat().st_mtime_ns,
         data.stat().st_mtime_ns if data.exists() else 0,
         bank.stat().st_mtime_ns if bank.exists() else 0,
+        atlas.stat().st_mtime_ns if atlas.exists() else 0,
+        intro_stamp,
     )
     components.html(_experience_document(stamp), height=1100, scrolling=False)
 
 
 @st.cache_data(show_spinner=False)
-def _experience_document(stamp: tuple[int, int]) -> str:
+def _experience_document(stamp: tuple) -> str:
     del stamp
     root = Path(__file__).resolve().parent
     template = (root / "src" / "experience.html").read_text(encoding="utf-8")
@@ -105,10 +114,36 @@ def _experience_document(stamp: tuple[int, int]) -> str:
 
         write_bank(bank_path)
     bank = bank_path.read_text(encoding="utf-8")
-    if "__EXPERIENCE_DATA__" not in template or "__BANK_DATA__" not in template:
-        raise RuntimeError("experience.html is missing a data placeholder.")
-    document = template.replace("__EXPERIENCE_DATA__", data, 1)
-    return document.replace("__BANK_DATA__", bank, 1)
+    atlas_path = root / "src" / "atlas_bank.json"
+    atlas = atlas_path.read_text(encoding="utf-8") if atlas_path.exists() else "null"
+    intro = _intro_frames_json(root / "atlas_outputs")
+    replacements = (
+        ("__EXPERIENCE_DATA__", data),
+        ("__BANK_DATA__", bank),
+        ("__ATLAS_BANK__", atlas),
+        ("__INTRO_FRAMES__", intro),
+    )
+    document = template
+    for token, value in replacements:
+        if token not in document:
+            raise RuntimeError(f"experience.html is missing {token}.")
+        document = document.replace(token, value, 1)
+    return document
+
+
+def _intro_frames_json(folder: Path) -> str:
+    """Base64 data URLs for Teleblur frames, or JSON null when none exist."""
+
+    if not folder.exists():
+        return "null"
+    frames = sorted(folder.glob("frame_*.png"))
+    if not frames:
+        return "null"
+    urls = []
+    for path in frames:
+        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+        urls.append(f"data:image/png;base64,{encoded}")
+    return json.dumps(urls)
 
 
 def _render_lab() -> None:
@@ -148,6 +183,15 @@ def _render_lab() -> None:
             config={"displaylogo": False, "modeBarButtonsToRemove": ["lasso2d", "select2d"]},
         )
         st.caption(bank_note)
+    atlas_figure, atlas_note, atlas_jobs = _atlas_figure()
+    if atlas_figure is not None:
+        st.plotly_chart(
+            atlas_figure,
+            width="stretch",
+            config={"displaylogo": False, "modeBarButtonsToRemove": ["lasso2d", "select2d"]},
+        )
+        st.caption(atlas_note)
+        st.code("\n".join(atlas_jobs), language="text")
     st.plotly_chart(
         _rate_figure(sim, controls["temperature_k"]),
         width="stretch",
@@ -487,6 +531,70 @@ def _bank_figure() -> tuple[go.Figure | None, str]:
     return figure, note
 
 
+def _atlas_figure() -> tuple[go.Figure | None, str, list[str]]:
+    path = Path(__file__).resolve().parent / "src" / "atlas_bank.json"
+    if not path.exists():
+        return None, "", []
+    bank = json.loads(path.read_text(encoding="utf-8"))
+    points = bank.get("points") or []
+    if not points:
+        return None, "", []
+    times = [float(point["t_over_period"]) for point in points]
+    ideal = [float(point["ideal_acceptor"]) for point in points]
+    measured = [float(point["acceptor_population"]) for point in points]
+    length = [float(point["bloch_length"]) for point in points]
+    provider = str(bank.get("provider", "aer"))
+    backend = str(bank.get("backend", "automatic"))
+    shots = bank.get("shots")
+    figure = go.Figure()
+    figure.add_trace(
+        go.Scatter(
+            x=times,
+            y=ideal,
+            name="Exact acceptor",
+            line={"color": TEAL, "width": 2.4},
+            hovertemplate="t = %{x:.3f} T_tun<br>exact = %{y:.3f}<extra></extra>",
+        )
+    )
+    figure.add_trace(
+        go.Scatter(
+            x=times,
+            y=measured,
+            name="Atlas acceptor",
+            mode="lines+markers",
+            line={"color": AMBER, "width": 1.6},
+            marker={"size": 7, "color": AMBER},
+            hovertemplate="t = %{x:.3f} T_tun<br>Atlas P = %{y:.3f}<extra></extra>",
+        )
+    )
+    figure.add_trace(
+        go.Scatter(
+            x=times,
+            y=length,
+            name="Bloch length |r|",
+            mode="lines+markers",
+            line={"color": CORAL, "width": 1.6, "dash": "dot"},
+            marker={"size": 6, "color": CORAL},
+            hovertemplate="t = %{x:.3f} T_tun<br>|r| = %{y:.3f}<extra></extra>",
+        )
+    )
+    figure.update_layout(
+        title=f"Atlas tomography · {provider}/{backend} · simulator · {shots} shots",
+        height=420,
+        yaxis={"title": "Acceptor population and |r|", "range": [0, 1.05]},
+        xaxis={"title": "t / T_tun"},
+        **_layout(top=60),
+    )
+    _style_axes(figure)
+    note = (
+        f"{provider}/{backend} is the Aer simulator, not a hardware QPU. "
+        f"{shots} shots at each of {len(points)} times. "
+        "Acceptor population is (1 − z) / 2 from observables X, Y, Z. Job ids:"
+    )
+    jobs = [str(job_id) for job_id in bank.get("job_ids", [])]
+    return figure, note, jobs
+
+
 def _rate_figure(sim: dict, temperature_k: float) -> go.Figure:
     temperatures = np.linspace(100.0, 400.0, 80)
     classical = np.array(
@@ -622,23 +730,25 @@ def _context_caption() -> None:
 
 
 def _atlas_panel() -> None:
-    st.markdown("### Atlas")
-    payload = _atlas_payload()
-    if payload is None:
-        st.info("Atlas: not connected")
+    st.markdown("### Atlas tomography")
+    path = Path(__file__).resolve().parent / "src" / "atlas_bank.json"
+    if not path.exists():
+        st.info(
+            "src/atlas_bank.json is not in this checkout. "
+            "Experience tap-to-observe falls back to the local simulator bank."
+        )
         return
-    st.json(payload)
-
-
-def _atlas_payload() -> dict | None:
-    client = AtlasClient()
-    try:
-        data = client.get_job("connection")
-    except NotImplementedError:
-        return None
-    if not data:
-        return None
-    return data
+    bank = json.loads(path.read_text(encoding="utf-8"))
+    provider = bank.get("provider", "aer")
+    backend = bank.get("backend", "automatic")
+    st.markdown(
+        f"`{provider}` / `{backend}` · {bank.get('execution', 'simulator')} · "
+        f"{bank.get('shots')} shots · `{bank.get('engine')}` · {bank.get('date')}"
+    )
+    st.caption(
+        "aer is a simulator. The tomography-api-v2 schema does not list an IBM hardware provider, "
+        "so this page does not call the run a QPU."
+    )
 
 
 def _potential_window(x_angstrom: np.ndarray, v_ev: np.ndarray) -> list[float]:
