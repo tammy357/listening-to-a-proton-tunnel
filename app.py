@@ -1,11 +1,9 @@
-"""Streamlit bench for proton tunneling in carbonic anhydrase II.
+"""Streamlit bench for a one-dimensional tunneling doublet.
 
-The page loads the 1HED zinc–water distance, evolves an 8-qubit Gaussian
-packet in the asymmetric double well, and draws both the final density and
-the donor/acceptor populations. Audio is on demand: the QPAM button measures
-the final statevector with Moth Quantum's quantumaudio package and plays the
-reconstructed waveform. An Atlas card shows the job document that was posted,
-including statevector fidelity, circuit depth, and the active backend.
+PDB 1HED is illustrative active-site context. The Zn–HOH distance is not an
+input to the Hamiltonian. The plotted clock is in units of the tunneling
+period T_tun = h / ΔE. Audio is on demand: the QPAM button measures the final
+statevector with Moth Quantum's quantumaudio package.
 """
 
 from __future__ import annotations
@@ -17,17 +15,17 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from src.hamiltonian import ANGSTROM_M, JOULE_PER_EV, WELL_HALF_WIDTH_M
+from src.hamiltonian import ANGSTROM_M, DEFAULT_WELL_HALF_ANGSTROM, JOULE_PER_EV
 from src.moth_sonification import sonify_tunneling_state
 from src.pdb_parser import fetch_active_site
-from src.quantum_sim import evolve_tunneling
+from src.quantum_sim import evolve_exact
+from src.rates import k_classical, k_tunnel, kie
 
-FEMTOSECOND_S = 1.0e-15
-
-DEFAULT_BARRIER_EV = 0.20
+DEFAULT_BARRIER_EV = 0.30
 DEFAULT_ASYMMETRY_EV = 0.0
-DEFAULT_DURATION_FS = 50.0
+DEFAULT_PERIODS = 3.0
 DEFAULT_PITCH_HZ = 220.0
+REFERENCE_TEMPERATURE_K = 300.0
 
 INK = "#f3eee6"
 MUTED = "#a39888"
@@ -47,12 +45,12 @@ def main() -> None:
     )
     _inject_css()
     site = _load_site()
-    barrier_ev, asymmetry_ev, duration_fs, pitch_hz = _sidebar()
+    barrier_ev, asymmetry_ev, n_periods, pitch_hz = _sidebar()
     _header(site)
 
     try:
-        with st.spinner("Evolving the 8-qubit proton statevector…"):
-            sim = _simulate(barrier_ev, asymmetry_ev, duration_fs)
+        with st.spinner("Evolving the localized tunneling doublet…"):
+            sim = _simulate(barrier_ev, asymmetry_ev, n_periods)
     except Exception as exc:
         st.error(f"The tunneling evolution failed: {exc}")
         return
@@ -63,22 +61,39 @@ def main() -> None:
         width="stretch",
         config={"displaylogo": False, "modeBarButtonsToRemove": ["lasso2d", "select2d"]},
     )
-    half_width_angstrom = WELL_HALF_WIDTH_M / ANGSTROM_M
     st.caption(
-        f"Well minima sit at ±{half_width_angstrom:.2f} Å. "
-        "Positive asymmetry deepens the donor well on the zinc side (x < 0) and "
-        "raises the acceptor, so the proton is less willing to tunnel. "
-        "The potential axis is clipped to the barrier; the walls keep rising "
-        "toward the edges of the 3 Å grid. "
-        "Internal arithmetic stays in metres, kilograms, seconds, and joules."
+        f"Model well minima at ±{DEFAULT_WELL_HALF_ANGSTROM:.2f} Å. "
+        "V(x) = E_b (1 − (x/a)²)² + λx, with λ in eV/Å. "
+        "Positive λ lowers the donor side (x < 0). "
+        f"Ground truth is scipy.linalg.expm over {sim['n_periods']:.1f} tunneling periods. "
+        f"T_tun = {sim['tunneling_period_s']:.6e} s. "
+        "The Zn–HOH distance is illustrative active-site context and is not used in H."
     )
-    _audio_section(sim, site, barrier_ev, asymmetry_ev, duration_fs, pitch_hz)
+    st.caption(
+        "Qualitative comparison only, not an enzyme rate. "
+        f"k_classical({REFERENCE_TEMPERATURE_K:.0f} K) = {sim['k_classical']:.3e} s⁻¹ "
+        "assumes ν = 1×10¹³ s⁻¹. "
+        f"k_tunnel ≈ ΔE/h = {sim['k_tunnel']:.3e} s⁻¹ and does not depend on temperature "
+        f"in this model. H/D splitting ratio = {sim['kie']:.2f}."
+    )
+    _audio_section(sim, site, barrier_ev, asymmetry_ev, n_periods, pitch_hz)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def _load_site() -> dict:
     site = fetch_active_site()
+    if site is None:
+        return {
+            "available": False,
+            "pdb_id": "1HED",
+            "distance_angstrom": None,
+            "source": "unavailable",
+            "note": "PDB unavailable",
+            "zinc_xyz": None,
+            "water_xyz": None,
+        }
     return {
+        "available": True,
         "pdb_id": site.pdb_id,
         "distance_angstrom": site.distance_angstrom,
         "source": site.source,
@@ -89,17 +104,21 @@ def _load_site() -> dict:
 
 
 @st.cache_data(show_spinner=False)
-def _simulate(barrier_ev: float, asymmetry_ev: float, duration_fs: float) -> dict:
-    model, evolution = evolve_tunneling(
+def _simulate(barrier_ev: float, asymmetry_ev: float, n_periods: float) -> dict:
+    model, evolution = evolve_exact(
         barrier_ev=barrier_ev,
         asymmetry_ev=asymmetry_ev,
-        duration_s=duration_fs * FEMTOSECOND_S,
+        well_half_width_angstrom=DEFAULT_WELL_HALF_ANGSTROM,
+        mass="H",
+        n_periods=n_periods,
+        n_steps=200,
     )
     spacing_angstrom = model.spacing_m / ANGSTROM_M
+    splitting_j = evolution.splitting_j
     return {
         "x_angstrom": model.x_m / ANGSTROM_M,
         "v_ev": model.v_joule / JOULE_PER_EV,
-        "times_fs": evolution.times_s / FEMTOSECOND_S,
+        "times_in_periods": evolution.times_in_periods,
         "donor": evolution.donor_population,
         "acceptor": evolution.acceptor_population,
         "density_per_angstrom": evolution.final_density / spacing_angstrom,
@@ -109,6 +128,12 @@ def _simulate(barrier_ev: float, asymmetry_ev: float, duration_fs: float) -> dic
         / spacing_angstrom,
         "final_state": evolution.final_statevector,
         "survival": evolution.survival_probability,
+        "tunneling_period_s": evolution.tunneling_period_s,
+        "splitting_ev": evolution.splitting_ev,
+        "n_periods": n_periods,
+        "k_classical": k_classical(REFERENCE_TEMPERATURE_K, barrier_ev),
+        "k_tunnel": k_tunnel(splitting_j),
+        "kie": kie(barrier_ev, DEFAULT_WELL_HALF_ANGSTROM),
     }
 
 
@@ -129,15 +154,15 @@ def _sidebar() -> tuple[float, float, float, float]:
         max_value=0.2,
         value=DEFAULT_ASYMMETRY_EV,
         step=0.005,
-        help="λ in V(x) = E_b (1 − (x/a)²)² + λ (x/a). Positive λ biases the proton toward the donor.",
+        help="λ in V(x) = E_b (1 − (x/a)²)² + λx, with λ in eV/Å. Positive λ biases the proton toward the donor.",
     )
-    duration_fs = st.sidebar.slider(
-        "Simulation duration (fs)",
-        min_value=5.0,
-        max_value=50.0,
-        value=DEFAULT_DURATION_FS,
-        step=1.0,
-        help="How long the 8-qubit statevector is propagated.",
+    n_periods = st.sidebar.slider(
+        "Evolution length (tunneling periods)",
+        min_value=1.0,
+        max_value=5.0,
+        value=DEFAULT_PERIODS,
+        step=0.5,
+        help="Time axis in units of T_tun = h / ΔE. The default window is 0 to 3 periods.",
     )
     st.sidebar.markdown("### Sonification")
     pitch_hz = st.sidebar.slider(
@@ -154,7 +179,7 @@ def _sidebar() -> tuple[float, float, float, float]:
     return (
         float(barrier_ev),
         float(asymmetry_ev),
-        float(duration_fs),
+        float(n_periods),
         float(pitch_hz),
     )
 
@@ -162,24 +187,33 @@ def _sidebar() -> tuple[float, float, float, float]:
 def _header(site: dict) -> None:
     st.markdown(
         """
-        <p class="eyebrow">Moth Hacks 2026 · Human carbonic anhydrase II</p>
+        <p class="eyebrow">Moth Hacks 2026 · Illustrative active-site context</p>
         <h1>⚡ Quantum Tunneling &amp; Sonification Engine (Moth Hacks 2026)</h1>
-        <p class="lede">A proton on the catalytic water of PDB 1HED sits in a double well
-        between the zinc donor and the acceptor side of the active site. This bench
-        evolves that proton as an 8-qubit statevector and plays the final amplitudes
-        through Moth Quantum's QPAM encoder.</p>
+        <p class="lede">A one-dimensional double well on an 8-qubit grid. PDB 1HED is
+        illustrative active-site context for human carbonic anhydrase II. The Zn–HOH
+        distance is not an input to the Hamiltonian. The initial state is the localized
+        tunneling doublet, evolved with a matrix exponential and played through QPAM.</p>
         """,
         unsafe_allow_html=True,
     )
-    if site["source"] != "rcsb":
-        st.warning(site["note"])
-    zinc = ", ".join(f"{value:.3f}" for value in site["zinc_xyz"])
-    water = ", ".join(f"{value:.3f}" for value in site["water_xyz"])
-    source = "RCSB file" if site["source"] == "rcsb" else "Offline fallback"
+    if not site["available"]:
+        st.warning("PDB unavailable")
+        distance = "PDB unavailable"
+        distance_detail = "No coordinates substituted"
+        coord_caption = "PDB unavailable. The Hamiltonian does not use this distance."
+    else:
+        zinc = ", ".join(f"{value:.3f}" for value in site["zinc_xyz"])
+        water = ", ".join(f"{value:.3f}" for value in site["water_xyz"])
+        distance = f"{site['distance_angstrom']:.2f} Å"
+        distance_detail = "ZN A 262 to HOH A 342, not used in H"
+        coord_caption = (
+            f"Illustrative active-site context. ZN A 262 at ({zinc}) Å. "
+            f"HOH A 342 at ({water}) Å. This distance does not set the double well."
+        )
     cards = [
-        ("PDB ID", site["pdb_id"], "Human carbonic anhydrase II"),
-        ("Zn–HOH distance", f"{site['distance_angstrom']:.2f} Å", "ZN A 262 to HOH A 342"),
-        ("Coordinate source", source, "Angstroms, orthogonal PDB frame"),
+        ("Context", "Illustrative", "Active-site context, not a mechanism"),
+        ("PDB ID", site["pdb_id"] if site["available"] else "PDB unavailable", "Entry 1HED"),
+        ("Zn–HOH distance", distance, distance_detail),
         ("Register", "8 qubits", "256 sites from −1.5 to +1.5 Å"),
     ]
     cells = []
@@ -192,18 +226,17 @@ def _header(site: dict) -> None:
             "</div>"
         )
     st.markdown(f"<div class='metric-grid'>{''.join(cells)}</div>", unsafe_allow_html=True)
-    st.caption(f"ZN A 262 at ({zinc}) Å. HOH A 342 at ({water}) Å.")
+    st.caption(coord_caption)
 
 
 def _population_metrics(sim: dict) -> None:
     donor = float(sim["donor"][-1])
     acceptor = float(sim["acceptor"][-1])
-    survival = float(sim["survival"])
     cards = [
         ("Donor at final time", f"{donor * 100:.1f}%", "Probability on x < 0"),
         ("Acceptor at final time", f"{acceptor * 100:.1f}%", "Probability on x > 0"),
-        ("State survival", f"{survival:.3f}", "|⟨ψ(0)|ψ(t)⟩|²"),
-        ("Grid", "256 sites", "One amplitude per basis state"),
+        ("ΔE", f"{sim['splitting_ev']:.3e} eV", "E1 − E0 of this Hamiltonian"),
+        ("T_tun", f"{sim['tunneling_period_s']:.3e} s", "h / ΔE, physical tunneling period"),
     ]
     cells = []
     for label, value, detail in cards:
@@ -236,7 +269,7 @@ def _figure(sim: dict) -> go.Figure:
         vertical_spacing=0.16,
         subplot_titles=(
             "Double-well potential with the final proton density",
-            "Donor-well decay and acceptor-well tunneling",
+            "Donor and acceptor populations in units of the tunneling period",
         ),
         specs=[[{"secondary_y": True}], [{"secondary_y": False}]],
     )
@@ -280,28 +313,28 @@ def _figure(sim: dict) -> go.Figure:
     )
     figure.add_trace(
         go.Scatter(
-            x=sim["times_fs"],
+            x=sim["times_in_periods"],
             y=sim["donor"],
             name="Donor",
             line={"color": AMBER, "width": 2.4},
-            hovertemplate="t = %{x:.2f} fs<br>P_donor = %{y:.3f}<extra></extra>",
+            hovertemplate="t = %{x:.3f} T_tun<br>P_donor = %{y:.3f}<extra></extra>",
         ),
         row=2,
         col=1,
     )
     figure.add_trace(
         go.Scatter(
-            x=sim["times_fs"],
+            x=sim["times_in_periods"],
             y=sim["acceptor"],
             name="Acceptor",
             line={"color": TEAL, "width": 2.4},
-            hovertemplate="t = %{x:.2f} fs<br>P_acceptor = %{y:.3f}<extra></extra>",
+            hovertemplate="t = %{x:.3f} T_tun<br>P_acceptor = %{y:.3f}<extra></extra>",
         ),
         row=2,
         col=1,
     )
     figure.update_xaxes(title_text="x (Å)", row=1, col=1)
-    figure.update_xaxes(title_text="t (fs)", row=2, col=1)
+    figure.update_xaxes(title_text="t / T_tun", row=2, col=1)
     figure.update_yaxes(
         title_text="V(x) (eV)",
         range=_potential_window(sim["x_angstrom"], sim["v_ev"]),
@@ -342,13 +375,13 @@ def _audio_section(
     site: dict,
     barrier_ev: float,
     asymmetry_ev: float,
-    duration_fs: float,
+    n_periods: float,
     pitch_hz: float,
 ) -> None:
     token = (
         round(barrier_ev, 4),
         round(asymmetry_ev, 4),
-        round(duration_fs, 2),
+        round(n_periods, 2),
         round(pitch_hz, 1),
     )
     if st.session_state.get("audio_token") != token:
@@ -381,14 +414,19 @@ def _audio_section(
                         base_pitch=pitch_hz,
                         envelope=sim["acceptor"],
                         atlas_context={
-                            "pdb_id": site["pdb_id"],
-                            "zn_hoh_distance_angstrom": round(
-                                float(site["distance_angstrom"]), 4
+                            "pdb_id": site["pdb_id"] if site["available"] else None,
+                            "pdb_status": "rcsb" if site["available"] else "PDB unavailable",
+                            "zn_hoh_distance_angstrom": (
+                                round(float(site["distance_angstrom"]), 4)
+                                if site["available"]
+                                else None
                             ),
-                            "coordinate_source": site["source"],
+                            "distance_used_in_hamiltonian": False,
+                            "context": "illustrative active-site context",
                             "barrier_ev": barrier_ev,
-                            "asymmetry_ev": asymmetry_ev,
-                            "duration_fs": duration_fs,
+                            "asymmetry_ev_per_angstrom": asymmetry_ev,
+                            "n_tunneling_periods": n_periods,
+                            "tunneling_period_s": sim["tunneling_period_s"],
                             "base_pitch_hz": pitch_hz,
                             "donor_population_final": round(float(sim["donor"][-1]), 6),
                             "acceptor_population_final": round(

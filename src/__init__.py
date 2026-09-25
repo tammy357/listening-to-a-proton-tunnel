@@ -5,4 +5,5 @@ __all__ = [
     "moth_sonification",
     "pdb_parser",
     "quantum_sim",
+    "rates",
 ]

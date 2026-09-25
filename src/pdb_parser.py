@@ -1,16 +1,13 @@
-"""Active-site geometry for human carbonic anhydrase II, PDB 1HED.
+"""Illustrative active-site context from PDB 1HED.
 
-The catalytic zinc (ZN A 262) polarises a bound water (HOH A 342). The
-oxygen–zinc separation is the structural scale of the proton-transfer
-problem: the proton on that water faces a donor well on the zinc side and
-an acceptor well toward the proton wire. This module reads those two
-centres from the RCSB coordinate file and returns their Euclidean distance
-in angstroms.
+Human carbonic anhydrase II has a catalytic zinc (ZN A 262) and a bound
+water (HOH A 342). This module can read those two centres from the RCSB
+file and report their Euclidean distance in angstroms.
 
-PDB coordinates are stored in angstroms. The distance is therefore reported
-in angstroms as well. The Hamiltonian never consumes this number directly;
-the reaction coordinate is a local 1-D path of fixed length, and the
-measured distance is the experimental context shown on the dashboard.
+That distance is context for the dashboard only. It is not a parameter of
+the double-well Hamiltonian, and it does not set the well separation, the
+barrier, or the mass. If the download or the residue lookup fails, the
+caller receives ``None`` rather than stand-in coordinates.
 """
 
 from __future__ import annotations
@@ -22,12 +19,6 @@ import requests
 
 PDB_ID = "1HED"
 RCSB_URL = "https://files.rcsb.org/download/1HED.pdb"
-
-# Offline stand-in supplied for the hackathon brief. These are not the
-# deposited 1HED coordinates; they are used only when RCSB cannot be reached
-# or the residue records are missing.
-FALLBACK_ZINC_A = (12.5, -8.7, 11.7)
-FALLBACK_WATER_A = (13.9, -7.4, 15.9)
 
 ZINC_RESIDUE = ("ZN", "A", 262)
 WATER_RESIDUE = ("HOH", "A", 342)
@@ -42,7 +33,8 @@ class ActiveSite:
         zinc_xyz: Cartesian coordinates of ZN A 262, in angstroms.
         water_xyz: Cartesian coordinates of HOH A 342, in angstroms.
         distance_angstrom: Euclidean Zn–O distance, in angstroms.
-        source: ``"rcsb"`` when the file was downloaded, ``"fallback"`` otherwise.
+            Illustrative only: the tunneling model does not read this value.
+        source: ``"rcsb"`` when the file was downloaded.
         note: Short explanation of which coordinates were used.
     """
 
@@ -54,18 +46,18 @@ class ActiveSite:
     note: str
 
 
-def fetch_active_site(timeout: float = 8.0) -> ActiveSite:
+def fetch_active_site(timeout: float = 8.0) -> ActiveSite | None:
     """Download 1HED and measure the Zn–HOH distance.
 
-    The RCSB file endpoint is tried first. Any network error, non-200
-    response, or missing residue falls back to the fixed coordinates in the
-    hackathon brief so the dashboard still opens offline.
+    The distance is illustrative active-site context. Nothing in the
+    Hamiltonian is set from it.
 
     Args:
         timeout: Seconds to wait for the RCSB response.
 
     Returns:
-        Active-site geometry and the distance in angstroms.
+        The parsed geometry, or ``None`` when the file or either residue
+        is unavailable.
     """
 
     try:
@@ -73,22 +65,10 @@ def fetch_active_site(timeout: float = 8.0) -> ActiveSite:
         zinc = _find_residue(text, *ZINC_RESIDUE)
         water = _find_residue(text, *WATER_RESIDUE)
     except (requests.RequestException, OSError, ValueError):
-        zinc, water = None, None
+        return None
 
     if zinc is None or water is None:
-        zinc = FALLBACK_ZINC_A
-        water = FALLBACK_WATER_A
-        return ActiveSite(
-            pdb_id=PDB_ID,
-            zinc_xyz=zinc,
-            water_xyz=water,
-            distance_angstrom=_distance(zinc, water),
-            source="fallback",
-            note=(
-                "RCSB was unreachable or ZN A 262 / HOH A 342 was missing. "
-                "Using the offline zinc and water coordinates."
-            ),
-        )
+        return None
 
     return ActiveSite(
         pdb_id=PDB_ID,
@@ -96,7 +76,10 @@ def fetch_active_site(timeout: float = 8.0) -> ActiveSite:
         water_xyz=water,
         distance_angstrom=_distance(zinc, water),
         source="rcsb",
-        note="Coordinates read from the RCSB entry 1HED.",
+        note=(
+            "Coordinates read from RCSB entry 1HED. "
+            "Illustrative active-site context; not an input to the Hamiltonian."
+        ),
     )
 
 
