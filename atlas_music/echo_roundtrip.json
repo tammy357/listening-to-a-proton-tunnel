@@ -1,0 +1,23 @@
+{
+  "engine": "retrocausal-echo-v1",
+  "job_id": "484db3ab-4a72-4c55-9e69-bd26ac3246e8",
+  "params": {
+    "machine": "aer",
+    "exact": true,
+    "emit": "audio",
+    "include_tap_map": true,
+    "mix": 1.0,
+    "n_sites": 8,
+    "lattice": "chain",
+    "negative_mode": "invert"
+  },
+  "provider": "aer",
+  "backend": "aer",
+  "execution": "simulator",
+  "simulator_note": "machine is aer with exact true. The schema also accepts an IBM backend name such as ibm_phoenix, but it does not enumerate one, and no IBM token is sent. This run is a simulator, not hardware.",
+  "output_slots": [
+    "ir",
+    "result",
+    "taps"
+  ]
+}

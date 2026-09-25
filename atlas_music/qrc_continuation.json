@@ -1,0 +1,22 @@
+{
+  "engine": "qrc-midi-v1",
+  "job_id": "b6f554d7-089a-4204-9841-ef4ec8e8a25e",
+  "params": {
+    "bpm": 120,
+    "length": 64,
+    "loop": true,
+    "quality": "fast",
+    "seed": 7,
+    "variation": 1.0,
+    "velocity": 72
+  },
+  "provider": "aer",
+  "backend": "aer",
+  "execution": "simulator",
+  "simulator_note": "qrc-midi-v1 is the documented MIDI path. It has no machine field. The OpenAPI text says the reservoir work goes to qrc_core, and qrc-train-v2 states that trainer uses Qiskit Aer. length is a note count; 64 quarter notes are 16 bars of 4/4. This run is a simulator.",
+  "output_slots": [
+    "model",
+    "result",
+    "state"
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "engine": "blur-midi-v1",
+  "job_id": "3ce48680-cf94-47e7-9f38-369903d7ce21",
+  "params": {
+    "strength": 0.35,
+    "reach": 0.25,
+    "qubits": 8,
+    "threshold": 0.1,
+    "resolution": 0
+  },
+  "provider": "unspecified",
+  "backend": "quantum simulator",
+  "execution": "simulator",
+  "simulator_note": "blur-midi-v1 has no machine or provider field. Its schema describes a quantum simulation of piano-roll tiles. This run is a simulator.",
+  "output_slots": [
+    "result"
+  ]
+}

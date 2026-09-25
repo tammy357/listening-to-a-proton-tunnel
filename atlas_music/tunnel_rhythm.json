@@ -1,0 +1,36 @@
+{
+  "source": "src/atlas_bank.json ideal_acceptor crossings",
+  "periods": 4,
+  "isotopes": [
+    "H",
+    "H",
+    "H",
+    "H",
+    "H",
+    "H",
+    "H",
+    "H",
+    "D",
+    "D",
+    "D",
+    "D",
+    "D",
+    "D",
+    "D",
+    "D",
+    "T",
+    "T",
+    "T",
+    "T",
+    "T",
+    "T",
+    "T",
+    "T"
+  ],
+  "pitches": {
+    "H": 60,
+    "D": 55,
+    "T": 48
+  },
+  "bpm": 120
+}

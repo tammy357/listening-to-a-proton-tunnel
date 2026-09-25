@@ -30,7 +30,7 @@ Experience opens first and fills the window. It plays the exact doublet for H, D
 - Tunneling beat: two tones whose separation follows log10(ΔE), panned by the donor and acceptor populations. This is an artistic mapping.
 - Measured state: QPAM encode and decode of |ψ|² frames. The shot count is the measurement budget. Fewer shots sound noisier.
 - Atlas tomography, when `src/atlas_bank.json` exists, plots the Aer acceptor population and Bloch length against the exact curve, with a ±2σ shot-noise band on `|r|`, and lists the job ids. `provider` `aer` / `backend` `automatic` is a simulator. On that run, `|r|` leaving 1 is sampling noise. The word coherence is reserved for a real QPU. The tomography schema does not name an IBM hardware provider, so the page does not call this run hardware.
-- Set `MOTH_API_KEY` in the environment to call the Moth API (`https://api.mothquantum.com/api/v1`, header `Authorization: Bearer`). Do not put the key in source. `src/moth_client.py` reads it at runtime. Regenerating the bank is `python src/atlas_tomography.py`. Teleblur frames are `python src/atlas_teleblur.py`.
+- Set `MOTH_API_KEY` in the environment to call the Moth API (`https://api.mothquantum.com/api/v1`, header `Authorization: Bearer`). Do not put the key in source. `src/moth_client.py` reads it at runtime. Regenerating the bank is `python src/atlas_tomography.py`. Teleblur frames are `python src/atlas_teleblur.py`. The song cache is `python src/atlas_music.py`.
 
 PDB 1HED, when the download succeeds, is illustrative active-site context. The zinc–water distance is not an input to the Hamiltonian. If the download fails, the page says PDB unavailable.
 
@@ -51,6 +51,8 @@ PDB 1HED, when the download succeeds, is illustrative active-site context. The z
 | `src/atlas_tomography.py` | 24 `rx` circuits sent to `tomography-api-v2` |
 | `src/atlas_bank.json` | Aer simulator Bloch samples, when the API run has been saved |
 | `src/atlas_teleblur.py` | Uploads donor and acceptor art and calls `telablur-v1` |
+| `src/atlas_music.py` | Thirty-second round trip, `qrc-midi-v1`, optional `blur-midi-v1`, then `retrocausal-echo-v1` |
+| `atlas_music/` | Cached song audio, MIDI, tap maps, and one sidecar JSON per engine job |
 | `atlas_inputs/` | `donor.png` and `acceptor.png` |
 | `atlas_outputs/` | Teleblur frames and one sidecar JSON per frame |
 | `src/atlas_client.py` | Older stub. The live client is `moth_client.py` |
