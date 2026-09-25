@@ -1,0 +1,56 @@
+# Project Rules — Quantum Proton Tunneling & Creative Sonification (Moth Hacks 2026)
+
+## Domain
+This repository simulates quantum-mechanical hydrogen (proton) tunneling inside the
+active site of Human Carbonic Anhydrase II (RCSB PDB entry `1HED`) and sonifies the
+resulting quantum statevectors with Moth Quantum's `quantumaudio` package.
+
+## Units
+- All internal physics is computed in **SI units**. No exceptions inside `src/hamiltonian.py`
+  and `src/quantum_sim.py`.
+  - `HBAR   = 1.0545718e-34`  J·s
+  - `M_H    = 1.6735575e-27`  kg  (proton / hydrogen nucleus mass)
+  - `EV     = 1.60218e-19`    J per electron-volt
+  - `ANGSTROM = 1.0e-10`      m per Ångström
+  - `FEMTOSECOND = 1.0e-15`   s
+- Ångströms, electron-volts and femtoseconds are **presentation units only**. Convert at the
+  boundary (UI layer / function arguments named `*_ang`, `*_ev`, `*_fs`) and never mix them
+  into an SI expression.
+- Every function that accepts or returns a non-SI quantity must say so in its name *and*
+  its docstring.
+
+## Quantum register
+- The spatial grid is **exactly 256 points**, mapped one-to-one onto an **8-qubit register**
+  (2**8 == 256). `NUM_QUBITS = 8` and `NUM_GRID_POINTS = 256` are the single source of truth;
+  derive, never hardcode, any other size.
+- Grid domain: `x ∈ [-1.5 Å, +1.5 Å]`, uniformly spaced, endpoints inclusive.
+- Basis-state index `k` (big-endian Qiskit label) corresponds to grid point `x[k]`.
+  Amplitude `ψ[k]` is the wavefunction sampled at `x[k]`; `|ψ[k]|²` is a probability
+  (dimensionless, normalised to 1 over the grid), not a probability *density*.
+- Time evolution must be performed with a genuine unitary: build `U(dt) = expm(-i H dt / ħ)`
+  and wrap it in `qiskit.quantum_info.Operator` / `UnitaryGate`. Assert unitarity
+  (`Operator.is_unitary()`) and norm preservation before trusting a result.
+
+## Moth Quantum audio (QPAM)
+- Audio encoding follows the Moth Quantum **QPAM** standard
+  (Quantum Probability Amplitude Modulation): a real audio frame `a[k] ∈ [-1, 1]` is mapped to
+  probability amplitudes `sqrt((a[k] + 1) / 2)` (after normalisation), prepared as a single
+  state-preparation circuit, measured, and recovered from the shot histogram as
+  `a[k] ≈ 2 * (p[k] * norm) - 1`.
+- Always go through `src/moth_sonification.py`. That module owns every call into
+  `quantumaudio`; no other file imports it.
+- Prefer the public `quantumaudio` entry points. The module ships a small compatibility
+  shim because the package exposes slightly different helpers across releases — extend the
+  shim rather than sprinkling `try/except ImportError` around the codebase.
+- Rendered audio is **16-bit PCM mono WAV** wrapped in `io.BytesIO` so Streamlit's
+  `st.audio()` can stream it directly. Default sample rate: 22050 Hz.
+- QPAM decoding is shot-noise limited. Treat the noise as part of the instrument — do not
+  silently replace it with the exact analytic waveform.
+
+## Code style
+- Type-hint every public function and prefer `@dataclass` containers over loose tuples.
+- Docstrings are mandatory on public functions and must explain **both** the physics and,
+  where relevant, the Moth Quantum API contract.
+- Keep modules importable without network access: PDB fetches and Atlas API calls must
+  degrade gracefully to documented offline fallbacks.
+- Streamlit work belongs in `app.py`; `src/` stays UI-free and unit-testable.
