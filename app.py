@@ -31,7 +31,7 @@ DEFAULT_BARRIER_EV = 0.15
 DEFAULT_HALF_WIDTH_A = 0.35
 DEFAULT_ASYMMETRY = 0.0
 DEFAULT_ISOTOPE = "H"
-DEFAULT_TEMPERATURE_K = 300.0
+DEFAULT_TEMPERATURE_K = 300
 N_PERIODS = 1.0
 N_STEPS = 200
 BASIS_GATES = ["rz", "sx", "x", "cx"]
@@ -146,7 +146,7 @@ def _sidebar() -> dict:
         "Temperature (K)",
         min_value=100,
         max_value=400,
-        value=DEFAULT_TEMPERATURE_K,
+        value=int(DEFAULT_TEMPERATURE_K),
         step=5,
         help="Marks a point on the classical Arrhenius curve. k_tunnel is flat in this model.",
     )
