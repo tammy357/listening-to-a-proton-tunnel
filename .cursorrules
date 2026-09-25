@@ -1,0 +1,26 @@
+# Quantum proton tunneling and QPAM sonification
+
+This repository simulates hydrogen tunneling in the active site of human carbonic anhydrase II (PDB 1HED) and sonifies the statevector with Moth Quantum's quantumaudio package.
+
+## Units and grid
+
+- Keep every internal calculation in SI units: metres, kilograms, seconds, joules.
+- Convert to angstroms, electron-volts, and femtoseconds only at the plot and slider boundary.
+- Use the constants in `src/hamiltonian.py` (ħ, proton mass, joule per electron-volt). Do not switch the solver to ħ = 1.
+- The reaction coordinate is an 8-qubit register. 2^8 = 256 spatial samples on x ∈ [-1.5 Å, +1.5 Å].
+- Build the Hamiltonian as a sparse matrix H = T + V. Form the dense unitary only when applying U(dt) = exp(−i H dt / ħ).
+
+## Moth Quantum audio
+
+- Encode audio with Quantum Probability Amplitude Modulation (QPAM).
+- Call `quantumaudio.encode(samples, scheme="qpam")` and `quantumaudio.decode(circuit)`.
+- Samples passed to QPAM must be real and inside [-1, 1]. Project the complex statevector onto a real quadrature before encoding; QPAM's converter casts to real probability amplitudes.
+- Report circuit depth, statevector fidelity, and the backend that actually ran. Do not invent a successful Atlas HTTP status.
+- Dispatch the job payload to the Atlas API when `ATLAS_API_URL` / `ATLAS_API_KEY` are set, and always keep the local AerSimulator result.
+
+## Application
+
+- The entry point is `streamlit run app.py`.
+- Sliders: barrier 0.1–1.0 eV, asymmetry 0.0–0.2 eV, duration 5–50 fs, plus a base audio pitch.
+- The audio control label is `🎵 Synthesize Quantum Audio (QPAM)`.
+- The platform card title is `🌐 Moth Atlas Platform API Output`.

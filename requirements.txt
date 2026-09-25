@@ -1,0 +1,8 @@
+numpy>=1.26
+scipy>=1.11
+qiskit>=2.0
+qiskit-aer>=0.15
+quantumaudio>=0.2.0
+streamlit>=1.40
+plotly>=5.20
+requests>=2.31
