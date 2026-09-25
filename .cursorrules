@@ -12,15 +12,13 @@ This repository simulates hydrogen tunneling in the active site of human carboni
 
 ## Moth Quantum audio
 
-- Encode audio with Quantum Probability Amplitude Modulation (QPAM).
-- Call `quantumaudio.encode(samples, scheme="qpam")` and `quantumaudio.decode(circuit)`.
-- Samples passed to QPAM must be real and inside [-1, 1]. Project the complex statevector onto a real quadrature before encoding; QPAM's converter casts to real probability amplitudes.
-- Report circuit depth, statevector fidelity, and the backend that actually ran. Do not invent a successful Atlas HTTP status.
-- Dispatch the job payload to the Atlas API when `ATLAS_API_URL` / `ATLAS_API_KEY` are set, and always keep the local AerSimulator result.
+- QPAM samples are real and inside [-1, 1]. Call `quantumaudio.encode(data, scheme="qpam")` and `quantumaudio.decode(circuit, shots=...)`.
+- Tunneling beat is an artistic mapping: two sines, with the beat taken from log10(ΔE), panned by the donor and acceptor populations.
+- Measured state scales |ψ(x, t)|² frames onto [-1, 1], runs QPAM encode then decode at the requested shot count, and concatenates them into a WAV of at least three seconds.
+- Read `ATLAS_API_KEY` from the environment inside `src/atlas_client.py`. Never hardcode a key. Leave the client methods unimplemented until the platform docs are filled in, and show "Atlas: not connected" until a method actually returns data.
 
 ## Application
 
 - The entry point is `streamlit run app.py`.
-- Sliders: barrier 0.1–1.0 eV, asymmetry 0.0–0.2 eV, duration 5–50 fs, plus a base audio pitch.
-- The audio control label is `🎵 Synthesize Quantum Audio (QPAM)`.
-- The platform card title is `🌐 Moth Atlas Platform API Output`.
+- Sidebar: barrier 0.1–0.5 eV, well half-separation 0.25–0.5 Å, asymmetry 0–0.02 eV, isotope H/D/T, temperature 100–400 K, sonification mode, shot count, base pitch.
+- The header reads "Listening to Quantum Tunneling: isotope effects, sonified".

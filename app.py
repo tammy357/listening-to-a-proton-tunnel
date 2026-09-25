@@ -1,9 +1,9 @@
-"""Streamlit bench for a one-dimensional tunneling doublet.
+"""Listening bench for isotope-dependent tunneling on an 8-qubit grid.
 
-PDB 1HED is illustrative active-site context. The Zn–HOH distance is not an
-input to the Hamiltonian. The plotted clock is in units of the tunneling
-period T_tun = h / ΔE. Audio is on demand: the QPAM button measures the final
-statevector with Moth Quantum's quantumaudio package.
+The exact propagator is ``evolve_exact``. The split-operator circuit is drawn
+on the same clock. Audio is either an artistic beat mapped from ΔE and the
+well populations, or QPAM measurements of ``|ψ|²`` frames. Atlas is not
+connected until ``AtlasClient`` returns a real payload.
 """
 
 from __future__ import annotations
@@ -13,235 +13,274 @@ import html
 import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
-from plotly.subplots import make_subplots
+from qiskit import transpile
 
-from src.hamiltonian import ANGSTROM_M, DEFAULT_WELL_HALF_ANGSTROM, JOULE_PER_EV
-from src.moth_sonification import sonify_tunneling_state
+from src.atlas_client import AtlasClient
+from src.hamiltonian import ANGSTROM_M, JOULE_PER_EV
+from src.moth_sonification import (
+    DEFAULT_PITCH_HZ,
+    DEFAULT_SAMPLE_RATE,
+    measured_state,
+    tunneling_beat,
+)
 from src.pdb_parser import fetch_active_site
-from src.quantum_sim import evolve_exact
+from src.quantum_sim import evolve_exact, evolve_split_operator, split_operator_circuit
 from src.rates import k_classical, k_tunnel, kie
 
-DEFAULT_BARRIER_EV = 0.30
-DEFAULT_ASYMMETRY_EV = 0.0
-DEFAULT_PERIODS = 3.0
-DEFAULT_PITCH_HZ = 220.0
-REFERENCE_TEMPERATURE_K = 300.0
+DEFAULT_BARRIER_EV = 0.15
+DEFAULT_HALF_WIDTH_A = 0.35
+DEFAULT_ASYMMETRY = 0.0
+DEFAULT_ISOTOPE = "H"
+DEFAULT_TEMPERATURE_K = 300.0
+N_PERIODS = 1.0
+N_STEPS = 200
+BASIS_GATES = ["rz", "sx", "x", "cx"]
 
 INK = "#f3eee6"
 MUTED = "#a39888"
 AMBER = "#e4a23a"
 TEAL = "#3cbaa6"
+CORAL = "#e07a5f"
 LINE = "#3a342c"
 PANEL = "#191714"
 PAPER = "#12110f"
 
+MODES = {
+    "Tunneling beat": "tunneling_beat",
+    "Measured state": "measured_state",
+}
+
 
 def main() -> None:
     st.set_page_config(
-        page_title="Quantum Tunneling Sonification",
+        page_title="Listening to Quantum Tunneling",
         page_icon="⚡",
         layout="wide",
         initial_sidebar_state="expanded",
     )
     _inject_css()
-    site = _load_site()
-    barrier_ev, asymmetry_ev, n_periods, pitch_hz = _sidebar()
-    _header(site)
+    controls = _sidebar()
+    _header()
 
     try:
-        with st.spinner("Evolving the localized tunneling doublet…"):
-            sim = _simulate(barrier_ev, asymmetry_ev, n_periods)
+        with st.spinner("Evolving the exact doublet and one period of the split-operator circuit…"):
+            sim = _simulate(
+                controls["barrier_ev"],
+                controls["half_width_a"],
+                controls["asymmetry"],
+                controls["isotope"],
+            )
     except Exception as exc:
         st.error(f"The tunneling evolution failed: {exc}")
+        _atlas_panel()
         return
 
-    _population_metrics(sim)
+    _metrics(sim)
+    time_index = _time_slider(sim)
     st.plotly_chart(
-        _figure(sim),
+        _potential_figure(sim, time_index),
+        width="stretch",
+        config={"displaylogo": False, "modeBarButtonsToRemove": ["lasso2d", "select2d"]},
+    )
+    st.plotly_chart(
+        _population_figure(sim),
+        width="stretch",
+        config={"displaylogo": False, "modeBarButtonsToRemove": ["lasso2d", "select2d"]},
+    )
+    st.plotly_chart(
+        _rate_figure(sim, controls["temperature_k"]),
         width="stretch",
         config={"displaylogo": False, "modeBarButtonsToRemove": ["lasso2d", "select2d"]},
     )
     st.caption(
-        f"Model well minima at ±{DEFAULT_WELL_HALF_ANGSTROM:.2f} Å. "
-        "V(x) = E_b (1 − (x/a)²)² + λx, with λ in eV/Å. "
-        "Positive λ lowers the donor side (x < 0). "
-        f"Ground truth is scipy.linalg.expm over {sim['n_periods']:.1f} tunneling periods. "
-        f"T_tun = {sim['tunneling_period_s']:.6e} s. "
-        "The Zn–HOH distance is illustrative active-site context and is not used in H."
+        "V(x) = E_b (1 − (x/a)²)² + λx. "
+        f"Populations cover one tunneling period in {N_STEPS} steps. "
+        "The circuit is the symmetric split-operator product on 8 qubits. "
+        "Fidelity is |⟨ψ_circuit|ψ_exact⟩|² at the end of that period. "
+        "On a taller barrier the dashed circuit curves leave the solid ones, "
+        "and that fidelity falls with them. "
+        "Depth is one Trotter step after transpiling to rz, sx, x, cx "
+        "(optimization level 1)."
     )
-    st.caption(
-        "Qualitative comparison only, not an enzyme rate. "
-        f"k_classical({REFERENCE_TEMPERATURE_K:.0f} K) = {sim['k_classical']:.3e} s⁻¹ "
-        "assumes ν = 1×10¹³ s⁻¹. "
-        f"k_tunnel ≈ ΔE/h = {sim['k_tunnel']:.3e} s⁻¹ and does not depend on temperature "
-        f"in this model. H/D splitting ratio = {sim['kie']:.2f}."
+    _audio_player(sim, controls)
+    _context_caption()
+    _atlas_panel()
+
+
+def _sidebar() -> dict:
+    st.sidebar.markdown("### Double well")
+    barrier_ev = st.sidebar.slider(
+        "Barrier E_b (eV)",
+        min_value=0.1,
+        max_value=0.5,
+        value=DEFAULT_BARRIER_EV,
+        step=0.01,
+        help="Height of V(x) at x = 0.",
     )
-    _audio_section(sim, site, barrier_ev, asymmetry_ev, n_periods, pitch_hz)
+    half_width_a = st.sidebar.slider(
+        "Well half-separation a (Å)",
+        min_value=0.25,
+        max_value=0.50,
+        value=DEFAULT_HALF_WIDTH_A,
+        step=0.01,
+        help="The well minima of the model potential sit at x = ±a.",
+    )
+    asymmetry = st.sidebar.slider(
+        "Asymmetry λ (eV)",
+        min_value=0.0,
+        max_value=0.02,
+        value=DEFAULT_ASYMMETRY,
+        step=0.001,
+        help=(
+            "Coefficient of λx, applied as eV per angstrom. "
+            "Larger values detune the two wells and suppress coherent tunneling."
+        ),
+    )
+    isotope = st.sidebar.selectbox(
+        "Isotope",
+        options=["H", "D", "T"],
+        index=["H", "D", "T"].index(DEFAULT_ISOTOPE),
+        help="Mass presets for the proton, deuteron, and triton. V(x) is unchanged.",
+    )
+    temperature_k = st.sidebar.slider(
+        "Temperature (K)",
+        min_value=100,
+        max_value=400,
+        value=DEFAULT_TEMPERATURE_K,
+        step=5,
+        help="Marks a point on the classical Arrhenius curve. k_tunnel is flat in this model.",
+    )
+    st.sidebar.markdown("### Listening")
+    mode_label = st.sidebar.selectbox(
+        "Sonification mode",
+        options=list(MODES),
+        help="Tunneling beat pans two tones with the populations. Measured state plays QPAM reconstructions of |ψ|².",
+    )
+    shots = st.sidebar.select_slider(
+        "Shot count",
+        options=[64, 128, 256, 512, 1024, 2048, 4096, 8192],
+        value=1024,
+        help="Measurements per probability frame in Measured state. Fewer shots make a noisier sound.",
+    )
+    pitch_hz = st.sidebar.slider(
+        "Base pitch (Hz)",
+        min_value=80.0,
+        max_value=880.0,
+        value=DEFAULT_PITCH_HZ,
+        step=1.0,
+        help="Carrier of the tunneling beat. 220 Hz is A3.",
+    )
+    return {
+        "barrier_ev": float(barrier_ev),
+        "half_width_a": float(half_width_a),
+        "asymmetry": float(asymmetry),
+        "isotope": str(isotope),
+        "temperature_k": float(temperature_k),
+        "mode": MODES[mode_label],
+        "mode_label": mode_label,
+        "shots": int(shots),
+        "pitch_hz": float(pitch_hz),
+    }
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def _load_site() -> dict:
     site = fetch_active_site()
     if site is None:
-        return {
-            "available": False,
-            "pdb_id": "1HED",
-            "distance_angstrom": None,
-            "source": "unavailable",
-            "note": "PDB unavailable",
-            "zinc_xyz": None,
-            "water_xyz": None,
-        }
+        return {"available": False, "pdb_id": "1HED", "distance_angstrom": None}
     return {
         "available": True,
         "pdb_id": site.pdb_id,
         "distance_angstrom": site.distance_angstrom,
-        "source": site.source,
-        "note": site.note,
-        "zinc_xyz": site.zinc_xyz,
-        "water_xyz": site.water_xyz,
     }
 
 
 @st.cache_data(show_spinner=False)
-def _simulate(barrier_ev: float, asymmetry_ev: float, n_periods: float) -> dict:
+def _simulate(barrier_ev: float, half_width_a: float, asymmetry: float, isotope: str) -> dict:
     model, evolution = evolve_exact(
         barrier_ev=barrier_ev,
-        asymmetry_ev=asymmetry_ev,
-        well_half_width_angstrom=DEFAULT_WELL_HALF_ANGSTROM,
-        mass="H",
-        n_periods=n_periods,
-        n_steps=200,
+        asymmetry_ev=asymmetry,
+        well_half_width_angstrom=half_width_a,
+        mass=isotope,
+        n_periods=N_PERIODS,
+        n_steps=N_STEPS,
+        keep_states=True,
     )
+    if evolution.states is None:
+        raise RuntimeError("The exact evolution did not keep its states.")
+    dt = float(evolution.times_s[1] - evolution.times_s[0])
+    circuit_states = evolve_split_operator(
+        evolution.initial_statevector,
+        model.v_joule,
+        model.mass_kg,
+        model.spacing_m,
+        dt,
+        n_steps=N_STEPS,
+        sample_at=tuple(range(N_STEPS + 1)),
+    )
+    donor_mask = model.x_m < 0.0
+    circuit_donor = np.empty(N_STEPS + 1, dtype=np.float64)
+    circuit_acceptor = np.empty(N_STEPS + 1, dtype=np.float64)
+    for frame in range(N_STEPS + 1):
+        probability = np.abs(circuit_states[frame]) ** 2
+        circuit_donor[frame] = float(probability[donor_mask].sum())
+        circuit_acceptor[frame] = float(probability[~donor_mask].sum())
+    fidelity = float(np.abs(np.vdot(circuit_states[N_STEPS], evolution.states[N_STEPS])) ** 2)
+
+    step = split_operator_circuit(
+        model.v_joule, model.mass_kg, model.spacing_m, dt, n_steps=1
+    )
+    compiled = transpile(step, basis_gates=BASIS_GATES, optimization_level=1)
     spacing_angstrom = model.spacing_m / ANGSTROM_M
-    splitting_j = evolution.splitting_j
+    densities = np.abs(evolution.states) ** 2
     return {
         "x_angstrom": model.x_m / ANGSTROM_M,
         "v_ev": model.v_joule / JOULE_PER_EV,
         "times_in_periods": evolution.times_in_periods,
-        "donor": evolution.donor_population,
-        "acceptor": evolution.acceptor_population,
-        "density_per_angstrom": evolution.final_density / spacing_angstrom,
-        "initial_density_per_angstrom": (
-            np.abs(evolution.initial_statevector) ** 2
-        )
-        / spacing_angstrom,
-        "final_state": evolution.final_statevector,
-        "survival": evolution.survival_probability,
-        "tunneling_period_s": evolution.tunneling_period_s,
-        "splitting_ev": evolution.splitting_ev,
-        "n_periods": n_periods,
-        "k_classical": k_classical(REFERENCE_TEMPERATURE_K, barrier_ev),
-        "k_tunnel": k_tunnel(splitting_j),
-        "kie": kie(barrier_ev, DEFAULT_WELL_HALF_ANGSTROM),
+        "donor_exact": evolution.donor_population,
+        "acceptor_exact": evolution.acceptor_population,
+        "donor_circuit": circuit_donor,
+        "acceptor_circuit": circuit_acceptor,
+        "density_per_angstrom": densities / spacing_angstrom,
+        "splitting_ev": float(evolution.splitting_ev),
+        "splitting_j": float(evolution.splitting_j),
+        "tunneling_period_s": float(evolution.tunneling_period_s),
+        "fidelity": fidelity,
+        "circuit_depth": int(compiled.depth()),
+        "circuit_size": int(compiled.size()),
+        "kie": float(kie(barrier_ev, half_width_a)),
+        "k_tunnel": float(k_tunnel(evolution.splitting_j)),
+        "barrier_ev": float(barrier_ev),
+        "isotope": isotope,
     }
 
 
-def _sidebar() -> tuple[float, float, float, float]:
-    st.sidebar.markdown("### Double well")
-    st.sidebar.caption("Laboratory scales. The solver converts these to joules and seconds.")
-    barrier_ev = st.sidebar.slider(
-        "Barrier height (eV)",
-        min_value=0.1,
-        max_value=1.0,
-        value=DEFAULT_BARRIER_EV,
-        step=0.01,
-        help="Height of V(x) at x = 0, between the donor and acceptor wells.",
-    )
-    asymmetry_ev = st.sidebar.slider(
-        "Asymmetry drive (eV)",
-        min_value=0.0,
-        max_value=0.2,
-        value=DEFAULT_ASYMMETRY_EV,
-        step=0.005,
-        help="λ in V(x) = E_b (1 − (x/a)²)² + λx, with λ in eV/Å. Positive λ biases the proton toward the donor.",
-    )
-    n_periods = st.sidebar.slider(
-        "Evolution length (tunneling periods)",
-        min_value=1.0,
-        max_value=5.0,
-        value=DEFAULT_PERIODS,
-        step=0.5,
-        help="Time axis in units of T_tun = h / ΔE. The default window is 0 to 3 periods.",
-    )
-    st.sidebar.markdown("### Sonification")
-    pitch_hz = st.sidebar.slider(
-        "Base audio pitch (Hz)",
-        min_value=80.0,
-        max_value=880.0,
-        value=DEFAULT_PITCH_HZ,
-        step=1.0,
-        help="The decoded spatial frame is one oscillator cycle. 220 Hz is A3.",
-    )
-    st.sidebar.caption(
-        "8 qubits · 256 sites · x from −1.5 Å to +1.5 Å · QPAM via quantumaudio."
-    )
-    return (
-        float(barrier_ev),
-        float(asymmetry_ev),
-        float(n_periods),
-        float(pitch_hz),
-    )
-
-
-def _header(site: dict) -> None:
+def _header() -> None:
     st.markdown(
         """
-        <p class="eyebrow">Moth Hacks 2026 · Illustrative active-site context</p>
-        <h1>⚡ Quantum Tunneling &amp; Sonification Engine (Moth Hacks 2026)</h1>
-        <p class="lede">A one-dimensional double well on an 8-qubit grid. PDB 1HED is
-        illustrative active-site context for human carbonic anhydrase II. The Zn–HOH
-        distance is not an input to the Hamiltonian. The initial state is the localized
-        tunneling doublet, evolved with a matrix exponential and played through QPAM.</p>
+        <p class="eyebrow">Moth Hacks 2026 · H / D / T on one double well</p>
+        <h1>Listening to Quantum Tunneling: isotope effects, sonified</h1>
+        <p class="lede">The tunneling doublet of a model double well, compared for
+        hydrogen, deuterium, and tritium. A matrix exponential is the reference.
+        A split-operator circuit runs the same grid. The sound is either a beat
+        mapped from the splitting, or a QPAM measurement of the probability.</p>
         """,
         unsafe_allow_html=True,
     )
-    if not site["available"]:
-        st.warning("PDB unavailable")
-        distance = "PDB unavailable"
-        distance_detail = "No coordinates substituted"
-        coord_caption = "PDB unavailable. The Hamiltonian does not use this distance."
-    else:
-        zinc = ", ".join(f"{value:.3f}" for value in site["zinc_xyz"])
-        water = ", ".join(f"{value:.3f}" for value in site["water_xyz"])
-        distance = f"{site['distance_angstrom']:.2f} Å"
-        distance_detail = "ZN A 262 to HOH A 342, not used in H"
-        coord_caption = (
-            f"Illustrative active-site context. ZN A 262 at ({zinc}) Å. "
-            f"HOH A 342 at ({water}) Å. This distance does not set the double well."
-        )
+
+
+def _metrics(sim: dict) -> None:
     cards = [
-        ("Context", "Illustrative", "Active-site context, not a mechanism"),
-        ("PDB ID", site["pdb_id"] if site["available"] else "PDB unavailable", "Entry 1HED"),
-        ("Zn–HOH distance", distance, distance_detail),
-        ("Register", "8 qubits", "256 sites from −1.5 to +1.5 Å"),
+        ("ΔE", _format_mev(sim["splitting_ev"]), "E1 − E0"),
+        ("Tunneling period", _format_period(sim["tunneling_period_s"]), "T_tun = h / ΔE"),
+        ("KIE (H/D)", f"{sim['kie']:.2f}", "ΔE(H) / ΔE(D) at λ = 0"),
+        ("Circuit fidelity", f"{sim['fidelity']:.4f}", "versus exact at T_tun"),
+        ("Circuit depth", str(sim["circuit_depth"]), f"{sim['circuit_size']} gates, one Trotter step"),
     ]
     cells = []
     for label, value, detail in cards:
         cells.append(
             "<div class='metric-card'>"
-            f"<span>{html.escape(label)}</span>"
-            f"<strong>{html.escape(str(value))}</strong>"
-            f"<em>{html.escape(detail)}</em>"
-            "</div>"
-        )
-    st.markdown(f"<div class='metric-grid'>{''.join(cells)}</div>", unsafe_allow_html=True)
-    st.caption(coord_caption)
-
-
-def _population_metrics(sim: dict) -> None:
-    donor = float(sim["donor"][-1])
-    acceptor = float(sim["acceptor"][-1])
-    cards = [
-        ("Donor at final time", f"{donor * 100:.1f}%", "Probability on x < 0"),
-        ("Acceptor at final time", f"{acceptor * 100:.1f}%", "Probability on x > 0"),
-        ("ΔE", f"{sim['splitting_ev']:.3e} eV", "E1 − E0 of this Hamiltonian"),
-        ("T_tun", f"{sim['tunneling_period_s']:.3e} s", "h / ΔE, physical tunneling period"),
-    ]
-    cells = []
-    for label, value, detail in cards:
-        cells.append(
-            "<div class='metric-card metric-card-slim'>"
             f"<span>{html.escape(label)}</span>"
             f"<strong>{html.escape(value)}</strong>"
             f"<em>{html.escape(detail)}</em>"
@@ -250,29 +289,21 @@ def _population_metrics(sim: dict) -> None:
     st.markdown(f"<div class='metric-grid'>{''.join(cells)}</div>", unsafe_allow_html=True)
 
 
-def _potential_window(x_angstrom: np.ndarray, v_ev: np.ndarray) -> list[float]:
-    """Y-limits that show the barrier instead of the tall grid-edge walls."""
-
-    x_angstrom = np.asarray(x_angstrom)
-    v_ev = np.asarray(v_ev)
-    crest = v_ev[np.abs(x_angstrom) <= 0.12]
-    top = float(crest.max()) if crest.size else float(np.median(v_ev))
-    floor = float(v_ev.min())
-    return [floor - 0.08, max(top * 1.45, floor + 0.45)]
-
-
-def _figure(sim: dict) -> go.Figure:
-    figure = make_subplots(
-        rows=2,
-        cols=1,
-        shared_xaxes=False,
-        vertical_spacing=0.16,
-        subplot_titles=(
-            "Double-well potential with the final proton density",
-            "Donor and acceptor populations in units of the tunneling period",
-        ),
-        specs=[[{"secondary_y": True}], [{"secondary_y": False}]],
+def _time_slider(sim: dict) -> int:
+    period = st.slider(
+        "Snapshot time (tunneling periods)",
+        min_value=0.0,
+        max_value=float(N_PERIODS),
+        value=0.5,
+        step=0.01,
+        help="Selects the |ψ|² frame drawn on V(x). Populations use the full period.",
     )
+    index = int(np.argmin(np.abs(sim["times_in_periods"] - period)))
+    return index
+
+
+def _potential_figure(sim: dict, time_index: int) -> go.Figure:
+    figure = go.Figure()
     figure.add_trace(
         go.Scatter(
             x=sim["x_angstrom"],
@@ -280,234 +311,279 @@ def _figure(sim: dict) -> go.Figure:
             name="V(x)",
             line={"color": MUTED, "width": 2},
             hovertemplate="x = %{x:.3f} Å<br>V = %{y:.3f} eV<extra></extra>",
-        ),
-        row=1,
-        col=1,
-        secondary_y=False,
+        )
     )
+    density = sim["density_per_angstrom"][time_index]
+    clock = float(sim["times_in_periods"][time_index])
     figure.add_trace(
         go.Scatter(
             x=sim["x_angstrom"],
-            y=sim["initial_density_per_angstrom"],
-            name="|ψ(x, 0)|²",
-            line={"color": AMBER, "width": 1.5, "dash": "dot"},
-            hovertemplate="x = %{x:.3f} Å<br>|ψ|² = %{y:.3f} Å⁻¹<extra></extra>",
-        ),
-        row=1,
-        col=1,
-        secondary_y=True,
-    )
-    figure.add_trace(
-        go.Scatter(
-            x=sim["x_angstrom"],
-            y=sim["density_per_angstrom"],
-            name="|ψ(x, t)|²",
+            y=density,
+            name=f"|ψ|² at {clock:.2f} T_tun",
             line={"color": TEAL, "width": 2.4},
             fill="tozeroy",
             fillcolor="rgba(60, 186, 166, 0.18)",
+            yaxis="y2",
             hovertemplate="x = %{x:.3f} Å<br>|ψ|² = %{y:.3f} Å⁻¹<extra></extra>",
-        ),
-        row=1,
-        col=1,
-        secondary_y=True,
+        )
     )
-    figure.add_trace(
-        go.Scatter(
-            x=sim["times_in_periods"],
-            y=sim["donor"],
-            name="Donor",
-            line={"color": AMBER, "width": 2.4},
-            hovertemplate="t = %{x:.3f} T_tun<br>P_donor = %{y:.3f}<extra></extra>",
-        ),
-        row=2,
-        col=1,
-    )
-    figure.add_trace(
-        go.Scatter(
-            x=sim["times_in_periods"],
-            y=sim["acceptor"],
-            name="Acceptor",
-            line={"color": TEAL, "width": 2.4},
-            hovertemplate="t = %{x:.3f} T_tun<br>P_acceptor = %{y:.3f}<extra></extra>",
-        ),
-        row=2,
-        col=1,
-    )
-    figure.update_xaxes(title_text="x (Å)", row=1, col=1)
-    figure.update_xaxes(title_text="t / T_tun", row=2, col=1)
-    figure.update_yaxes(
-        title_text="V(x) (eV)",
-        range=_potential_window(sim["x_angstrom"], sim["v_ev"]),
-        row=1,
-        col=1,
-        secondary_y=False,
-    )
-    figure.update_yaxes(title_text="|ψ|² (Å⁻¹)", row=1, col=1, secondary_y=True)
-    figure.update_yaxes(title_text="Population", range=[0, 1.02], row=2, col=1)
     figure.update_layout(
-        height=740,
-        paper_bgcolor=PAPER,
-        plot_bgcolor=PANEL,
-        font={"color": INK, "family": "Outfit, Helvetica, sans-serif", "size": 13},
-        legend={
+        title="Potential and probability",
+        height=420,
+        yaxis={"title": "V(x) (eV)", "range": _potential_window(sim["x_angstrom"], sim["v_ev"])},
+        yaxis2={"title": "|ψ|² (Å⁻¹)", "overlaying": "y", "side": "right"},
+        xaxis={"title": "x (Å)"},
+        **_layout(top=60),
+    )
+    _style_axes(figure)
+    return figure
+
+
+def _population_figure(sim: dict) -> go.Figure:
+    figure = go.Figure()
+    clock = sim["times_in_periods"]
+    series = (
+        ("Donor, exact", sim["donor_exact"], AMBER, "solid"),
+        ("Donor, circuit", sim["donor_circuit"], AMBER, "dash"),
+        ("Acceptor, exact", sim["acceptor_exact"], TEAL, "solid"),
+        ("Acceptor, circuit", sim["acceptor_circuit"], TEAL, "dash"),
+    )
+    for name, values, color, dash in series:
+        figure.add_trace(
+            go.Scatter(
+                x=clock,
+                y=values,
+                name=name,
+                line={"color": color, "width": 2.2, "dash": dash},
+                hovertemplate="t = %{x:.3f} T_tun<br>P = %{y:.3f}<extra></extra>",
+            )
+        )
+    figure.update_layout(
+        title=f"Donor and acceptor populations · {sim['isotope']}",
+        height=420,
+        yaxis={"title": "Population", "range": [0, 1.02]},
+        xaxis={"title": "t / T_tun"},
+        **_layout(top=60),
+    )
+    _style_axes(figure)
+    return figure
+
+
+def _rate_figure(sim: dict, temperature_k: float) -> go.Figure:
+    temperatures = np.linspace(100.0, 400.0, 80)
+    classical = np.array(
+        [k_classical(float(temperature), sim["barrier_ev"]) for temperature in temperatures]
+    )
+    tunnel = np.full_like(classical, sim["k_tunnel"])
+    marked = k_classical(temperature_k, sim["barrier_ev"])
+    figure = go.Figure()
+    figure.add_trace(
+        go.Scatter(
+            x=temperatures,
+            y=classical,
+            name="k_classical",
+            line={"color": AMBER, "width": 2.4},
+            hovertemplate="T = %{x:.0f} K<br>k = %{y:.3e} s⁻¹<extra></extra>",
+        )
+    )
+    figure.add_trace(
+        go.Scatter(
+            x=temperatures,
+            y=tunnel,
+            name="k_tunnel",
+            line={"color": TEAL, "width": 2.4, "dash": "dash"},
+            hovertemplate="T = %{x:.0f} K<br>k_tunnel = %{y:.3e} s⁻¹<extra></extra>",
+        )
+    )
+    figure.add_trace(
+        go.Scatter(
+            x=[temperature_k],
+            y=[marked],
+            name=f"{temperature_k:.0f} K",
+            mode="markers",
+            marker={"color": CORAL, "size": 11},
+            hovertemplate="T = %{x:.0f} K<br>k_classical = %{y:.3e} s⁻¹<extra></extra>",
+        )
+    )
+    figure.update_layout(
+        title="Qualitative illustration",
+        height=420,
+        yaxis={"title": "Rate (s⁻¹)", "type": "log"},
+        xaxis={"title": "Temperature (K)"},
+        **_layout(top=60),
+    )
+    _style_axes(figure)
+    return figure
+
+
+def _audio_player(sim: dict, controls: dict) -> None:
+    st.markdown(f"### {controls['mode_label']}")
+    try:
+        if controls["mode"] == "tunneling_beat":
+            clip = tunneling_beat(
+                sim["donor_exact"],
+                sim["acceptor_exact"],
+                sim["splitting_ev"],
+                base_pitch_hz=controls["pitch_hz"],
+                sample_rate=DEFAULT_SAMPLE_RATE,
+            )
+        else:
+            with st.spinner("Measuring probability frames with QPAM…"):
+                wav = _measured_wav(sim["density_per_angstrom"], controls["shots"])
+            clip = None
+    except Exception as exc:
+        st.error(f"Sonification failed: {exc}")
+        return
+
+    if clip is not None:
+        st.audio(clip.wav_bytes, format="audio/wav")
+        st.caption(clip.note)
+        st.plotly_chart(
+            _waveform_figure(clip.samples, clip.sample_rate),
+            width="stretch",
+            config={"displaylogo": False, "displayModeBar": False},
+        )
+    else:
+        st.audio(wav, format="audio/wav")
+        st.caption(
+            f"QPAM encode then decode of probability frames, {controls['shots']} shots each. "
+            "Fewer shots leave a noisier sound."
+        )
+
+
+@st.cache_data(show_spinner=False)
+def _measured_wav(density_per_angstrom: np.ndarray, shots: int) -> bytes:
+    clip = measured_state(density_per_angstrom, shots=shots, sample_rate=DEFAULT_SAMPLE_RATE)
+    return clip.wav_bytes
+
+
+def _waveform_figure(samples: np.ndarray, sample_rate: int) -> go.Figure:
+    window_n = int(0.05 * sample_rate)
+    times_ms = np.arange(window_n) / sample_rate * 1000.0
+    figure = go.Figure()
+    audio = np.asarray(samples)
+    if audio.ndim == 1:
+        figure.add_trace(
+            go.Scatter(x=times_ms, y=audio[:window_n], name="Mono", line={"color": AMBER, "width": 1.5})
+        )
+    else:
+        figure.add_trace(
+            go.Scatter(
+                x=times_ms, y=audio[:window_n, 0], name="Left (donor)", line={"color": AMBER, "width": 1.5}
+            )
+        )
+        figure.add_trace(
+            go.Scatter(
+                x=times_ms,
+                y=audio[:window_n, 1],
+                name="Right (acceptor)",
+                line={"color": TEAL, "width": 1.5},
+            )
+        )
+    figure.update_layout(
+        title="Opening 50 ms",
+        height=240,
+        xaxis={"title": "t (ms)"},
+        yaxis={"title": "Amplitude", "range": [-1.05, 1.05]},
+        **_layout(top=48),
+    )
+    _style_axes(figure)
+    return figure
+
+
+def _context_caption() -> None:
+    site = _load_site()
+    if site["available"] and site["distance_angstrom"] is not None:
+        st.caption(
+            f"Illustrative active-site context from PDB {site['pdb_id']}: "
+            f"Zn–HOH distance {site['distance_angstrom']:.2f} Å. "
+            "That distance is not an input to the Hamiltonian."
+        )
+    else:
+        st.caption("PDB unavailable. The Hamiltonian does not use a crystal distance.")
+
+
+def _atlas_panel() -> None:
+    st.markdown("### Atlas")
+    payload = _atlas_payload()
+    if payload is None:
+        st.info("Atlas: not connected")
+        return
+    st.json(payload)
+
+
+def _atlas_payload() -> dict | None:
+    client = AtlasClient()
+    try:
+        data = client.get_job("connection")
+    except NotImplementedError:
+        return None
+    if not data:
+        return None
+    return data
+
+
+def _potential_window(x_angstrom: np.ndarray, v_ev: np.ndarray) -> list[float]:
+    x_angstrom = np.asarray(x_angstrom)
+    v_ev = np.asarray(v_ev)
+    crest = v_ev[np.abs(x_angstrom) <= 0.15]
+    top = float(crest.max()) if crest.size else float(np.median(v_ev))
+    floor = float(v_ev.min())
+    return [floor - 0.05, max(top * 1.35, floor + 0.2)]
+
+
+def _format_mev(splitting_ev: float) -> str:
+    mev = splitting_ev * 1.0e3
+    if mev >= 1.0:
+        return f"{mev:.2f} meV"
+    if mev >= 0.01:
+        return f"{mev:.3f} meV"
+    return f"{mev:.2e} meV"
+
+
+def _format_period(seconds: float) -> str:
+    scales = (
+        (1e-15, 1e18, "as"),
+        (1e-12, 1e15, "fs"),
+        (1e-9, 1e12, "ps"),
+        (1e-6, 1e9, "ns"),
+        (1e-3, 1e6, "µs"),
+        (1.0, 1e3, "ms"),
+    )
+    for limit, factor, unit in scales:
+        if seconds < limit:
+            return f"{seconds * factor:.2f} {unit}"
+    return f"{seconds:.3f} s"
+
+
+def _layout(top: int) -> dict:
+    return {
+        "paper_bgcolor": PAPER,
+        "plot_bgcolor": PANEL,
+        "font": {"color": INK, "family": "Outfit, Helvetica, sans-serif", "size": 13},
+        "legend": {
             "orientation": "h",
             "yanchor": "bottom",
             "y": 1.02,
             "x": 0,
             "bgcolor": "rgba(0,0,0,0)",
         },
-        margin={"l": 60, "r": 50, "t": 70, "b": 50},
-        hovermode="x unified",
-    )
-    figure.update_annotations(font={"color": INK, "size": 14})
-    axis_style = {
-        "gridcolor": "rgba(243, 238, 230, 0.08)",
-        "zerolinecolor": "rgba(243, 238, 230, 0.18)",
-        "linecolor": LINE,
+        "margin": {"l": 60, "r": 60, "t": top, "b": 48},
+        "hovermode": "x unified",
     }
-    figure.update_xaxes(**axis_style)
-    figure.update_yaxes(**axis_style)
-    return figure
 
 
-def _audio_section(
-    sim: dict,
-    site: dict,
-    barrier_ev: float,
-    asymmetry_ev: float,
-    n_periods: float,
-    pitch_hz: float,
-) -> None:
-    token = (
-        round(barrier_ev, 4),
-        round(asymmetry_ev, 4),
-        round(n_periods, 2),
-        round(pitch_hz, 1),
+def _style_axes(figure: go.Figure) -> None:
+    figure.update_xaxes(
+        gridcolor="rgba(243, 238, 230, 0.08)",
+        zerolinecolor="rgba(243, 238, 230, 0.18)",
+        linecolor=LINE,
     )
-    if st.session_state.get("audio_token") != token:
-        st.session_state.pop("sonification", None)
-        st.session_state["audio_token"] = token
-
-    st.markdown("### Moth Quantum audio")
-    column_copy, column_play = st.columns([1.15, 1], gap="large")
-    with column_copy:
-        st.markdown(
-            "The final statevector is phase-aligned, split into two real "
-            "quadratures, and encoded with "
-            "`quantumaudio.encode(..., scheme=\"qpam\")`. "
-            "Decoding measures that circuit. The reconstructed frame is one "
-            "cycle of the oscillator, so the pitch slider sets how fast the "
-            "proton's spatial amplitude is scanned. Loudness follows the "
-            "acceptor population: tunneling opens the tone."
-        )
-        synthesize = st.button(
-            "🎵 Synthesize Quantum Audio (QPAM)",
-            type="primary",
-            width="stretch",
-        )
-    with column_play:
-        if synthesize:
-            with st.spinner("Measuring the QPAM circuit and filing the Atlas job…"):
-                try:
-                    st.session_state["sonification"] = sonify_tunneling_state(
-                        sim["final_state"],
-                        base_pitch=pitch_hz,
-                        envelope=sim["acceptor"],
-                        atlas_context={
-                            "pdb_id": site["pdb_id"] if site["available"] else None,
-                            "pdb_status": "rcsb" if site["available"] else "PDB unavailable",
-                            "zn_hoh_distance_angstrom": (
-                                round(float(site["distance_angstrom"]), 4)
-                                if site["available"]
-                                else None
-                            ),
-                            "distance_used_in_hamiltonian": False,
-                            "context": "illustrative active-site context",
-                            "barrier_ev": barrier_ev,
-                            "asymmetry_ev_per_angstrom": asymmetry_ev,
-                            "n_tunneling_periods": n_periods,
-                            "tunneling_period_s": sim["tunneling_period_s"],
-                            "base_pitch_hz": pitch_hz,
-                            "donor_population_final": round(float(sim["donor"][-1]), 6),
-                            "acceptor_population_final": round(
-                                float(sim["acceptor"][-1]), 6
-                            ),
-                            "initial_state_overlap": round(float(sim["survival"]), 6),
-                        },
-                    )
-                except Exception as exc:
-                    st.session_state.pop("sonification", None)
-                    st.error(f"QPAM synthesis failed: {exc}")
-
-        result = st.session_state.get("sonification")
-        if result is None:
-            st.markdown(
-                """
-                <div class="quiet">
-                  <strong>No measurement yet</strong>
-                  <p>The plots are already live. Synthesize to hear this statevector
-                  after QPAM encoding and shot reconstruction.</p>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-        else:
-            st.audio(result.wav_bytes, format="audio/wav")
-            st.plotly_chart(
-                _waveform_figure(result.waveform, result.sample_rate),
-                width="stretch",
-                config={"displaylogo": False, "displayModeBar": False},
-            )
-
-    result = st.session_state.get("sonification")
-    if result is not None:
-        dispatched = bool(result.atlas_job.get("atlas", {}).get("dispatched"))
-        status = (
-            "Atlas accepted the posted job."
-            if dispatched
-            else "Fidelity, depth, and backend come from the local Aer measurement. "
-            "The atlas block is the platform's actual HTTP response."
-        )
-        st.caption(status)
-        with st.expander("🌐 Moth Atlas Platform API Output", expanded=True):
-            st.json(result.atlas_job)
-
-
-def _waveform_figure(samples: np.ndarray, sample_rate: int) -> go.Figure:
-    """Draw the opening cycles so the QPAM frame is visible as a waveform.
-
-    A full 2.8 s clip at the base pitch is several hundred cycles. Plotting
-    every sample aliases into a smear. The first 40 ms keeps a handful of
-    cycles at audio resolution.
-    """
-
-    window = np.asarray(samples)[: int(0.04 * sample_rate)]
-    times_ms = np.arange(window.size) / sample_rate * 1000.0
-    figure = go.Figure(
-        go.Scatter(
-            x=times_ms,
-            y=window,
-            mode="lines",
-            line={"color": AMBER, "width": 1.6},
-            hovertemplate="t = %{x:.2f} ms<br>amplitude = %{y:.3f}<extra></extra>",
-        )
+    figure.update_yaxes(
+        gridcolor="rgba(243, 238, 230, 0.08)",
+        zerolinecolor="rgba(243, 238, 230, 0.18)",
+        linecolor=LINE,
     )
-    figure.update_layout(
-        height=240,
-        paper_bgcolor=PAPER,
-        plot_bgcolor=PANEL,
-        font={"color": INK, "family": "Outfit, Helvetica, sans-serif", "size": 12},
-        margin={"l": 48, "r": 16, "t": 36, "b": 40},
-        title={"text": "Opening 40 ms of the played waveform", "font": {"size": 14, "color": INK}},
-        xaxis={"title": "t (ms)", "gridcolor": "rgba(243,238,230,0.08)", "linecolor": LINE},
-        yaxis={
-            "title": "Amplitude",
-            "range": [-1.05, 1.05],
-            "gridcolor": "rgba(243,238,230,0.08)",
-            "linecolor": LINE,
-        },
-    )
-    return figure
 
 
 def _inject_css() -> None:
@@ -517,9 +593,7 @@ def _inject_css() -> None:
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
         <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,520;9..144,640&family=Outfit:wght@380;520;600&display=swap" rel="stylesheet">
         <style>
-          html, body, [class*="css"] {
-            font-family: "Outfit", Helvetica, sans-serif;
-          }
+          html, body, [class*="css"] { font-family: "Outfit", Helvetica, sans-serif; }
           .block-container { padding-top: 1.3rem; max-width: 1180px; }
           h1 {
             font-family: "Fraunces", Georgia, serif !important;
@@ -539,7 +613,7 @@ def _inject_css() -> None:
           .lede { color: #c9c0b2; font-size: 1.05rem; max-width: 46rem; margin-bottom: 0.4rem; }
           .metric-grid {
             display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
+            grid-template-columns: repeat(5, minmax(0, 1fr));
             gap: 0.7rem;
             margin: 0.8rem 0 1rem;
           }
@@ -559,7 +633,7 @@ def _inject_css() -> None:
           .metric-card strong {
             display: block;
             font-family: "Fraunces", Georgia, serif;
-            font-size: 1.45rem;
+            font-size: 1.35rem;
             font-weight: 560;
             margin-top: 0.18rem;
             color: #f3eee6;
@@ -568,24 +642,13 @@ def _inject_css() -> None:
             display: block;
             color: #a39888;
             font-style: normal;
-            font-size: 0.8rem;
+            font-size: 0.78rem;
             margin-top: 0.15rem;
           }
-          .quiet {
-            border: 1px dashed #3a342c;
+          div[data-testid="stAlert"] {
             border-radius: 14px;
-            padding: 1.1rem 1rem;
-            background: #191714;
-            min-height: 7.5rem;
           }
-          .quiet strong { display: block; font-size: 1.02rem; margin-bottom: 0.3rem; }
-          .quiet p { color: #a39888; margin: 0; }
-          div[data-testid="stExpander"] {
-            border: 1px solid #3a342c;
-            border-radius: 14px;
-            background: #1c1a16;
-          }
-          @media (max-width: 860px) {
+          @media (max-width: 900px) {
             .metric-grid { grid-template-columns: 1fr 1fr; }
             h1 { font-size: 1.65rem !important; }
           }

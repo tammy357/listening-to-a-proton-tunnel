@@ -1,6 +1,6 @@
-# Quantum Tunneling & Sonification Engine
+# Listening to Quantum Tunneling
 
-A Moth Hacks 2026 bench for proton transfer in human carbonic anhydrase II (PDB [1HED](https://www.rcsb.org/structure/1HED)). An 8-qubit statevector evolves in an asymmetric double well between the catalytic zinc and its bound water, and the final amplitudes are played as sound through Moth Quantum's [quantumaudio](https://quantumaudio.readthedocs.io/) QPAM encoder.
+An 8-qubit model of a proton moving in a double well, with hydrogen, deuterium, and tritium on the same potential. The exact clock is a matrix exponential. A split-operator circuit runs the same grid. Two listening modes turn that run into a 16-bit WAV.
 
 ## Run
 
@@ -13,55 +13,33 @@ streamlit run app.py
 
 The app listens on port **8741**.
 
-## What you can do
-
-- Read the Zn–HOH distance from RCSB. If the download fails, the page uses the offline coordinates Zn `(12.5, −8.7, 11.7)` Å and HOH `(13.9, −7.4, 15.9)` Å.
-- Drag the barrier (0.1–1.0 eV), the asymmetry (0–0.2 eV), and the duration (5–50 fs).
-- Watch the double well against the final proton density, and the donor versus acceptor populations.
-- Press **Synthesize Quantum Audio (QPAM)** to encode the final statevector, measure it, and play a 16-bit WAV. The pitch slider is the oscillator frequency; the spatial wavefunction is one cycle. Loudness follows how much probability has reached the acceptor well.
-
-## Physics, briefly
-
-Internal arithmetic is SI: metres, kilograms, seconds, joules. Sliders are converted at the boundary.
-
-The grid is 256 sites on \(x \in [-1.5, 1.5]\) Å, one site per computational-basis state of an 8-qubit register. The potential is
-
-\[
-V(x) = E_b \left(1 - (x/a)^2\right)^2 + \lambda (x/a)
-\]
-
-with well minima at \(a = 0.32\) Å. That width is short of a full hydrogen bond on purpose: with a real proton mass, a thicker barrier does not move visible probability across \(x = 0\) inside 50 fs. Positive \(\lambda\) deepens the donor side (\(x < 0\)).
-
-The kinetic energy is the three-point stencil for \(-\hbar^2/2m\, d^2/dx^2\). The Hamiltonian is stored sparse. Time evolution applies
-
-\[
-U(\Delta t) = \exp(-i H \Delta t / \hbar)
-\]
-
-as a Qiskit `Operator` to a `Statevector`, starting from a Gaussian packet in the donor well.
-
-At the default 0.20 eV barrier the packet's energy sits below the barrier, so acceptor population is tunneling. At the bottom of the slider (0.10 eV) the packet energy is close to the top of the barrier.
-
-## Audio and Atlas
-
-QPAM takes real samples in \([-1, 1]\). The complex statevector is normalised, rotated into the quadrature with the most energy, and concatenated with the orthogonal quadrature. That frame goes through `quantumaudio.encode(..., scheme="qpam")` and `quantumaudio.decode`. Reconstruction fidelity, basis-gate depth, and the Aer simulator name are written into the Atlas job card.
-
-The card POSTs that document to the Atlas API. It does not invent a successful response.
+Physics checks:
 
 ```bash
-export ATLAS_API_URL="https://api.mothquantum.com/v1/jobs"   # optional override
-export ATLAS_API_KEY="..."                                    # optional bearer token
+python tests/test_physics.py
 ```
 
-Without a key, the `atlas` object in the card shows the HTTP error from the public host, and the fidelity / depth / backend fields remain the local measurement.
+## What the page shows
+
+- Barrier E_b from 0.1 to 0.5 eV, well half-separation a from 0.25 to 0.5 Å, and an asymmetry λ from 0 to 0.02 eV/Å. Larger λ detunes the wells and suppresses coherent tunneling.
+- Isotope H, D, or T. Temperature from 100 to 400 K is only a marker on the rate sketch.
+- ΔE, the tunneling period, the H/D splitting ratio, the split-operator fidelity against the exact state, and the depth of one Trotter step.
+- V(x) with |ψ|² at a chosen time, donor and acceptor populations for the circuit and the exact propagator, and a log-scale sketch of k_classical(T) against a flat k_tunnel. That sketch is a qualitative illustration, not an enzyme rate.
+- Tunneling beat: two tones whose separation follows log10(ΔE), panned by the donor and acceptor populations. This is an artistic mapping.
+- Measured state: QPAM encode and decode of |ψ|² frames. The shot count is the measurement budget. Fewer shots sound noisier.
+- Atlas stays on "Atlas: not connected" until `src/atlas_client.py` is filled in from the platform docs. Set `ATLAS_API_KEY` in the environment. Do not put the key in source.
+
+PDB 1HED, when the download succeeds, is illustrative active-site context. The zinc–water distance is not an input to the Hamiltonian. If the download fails, the page says PDB unavailable.
 
 ## Layout
 
 | Path | Role |
 | --- | --- |
 | `app.py` | Streamlit dashboard |
-| `src/pdb_parser.py` | RCSB 1HED zinc and catalytic water |
-| `src/hamiltonian.py` | Constants, grid, sparse \(H = T + V\) |
-| `src/quantum_sim.py` | Gaussian packet and Qiskit time evolution |
-| `src/moth_sonification.py` | QPAM encode/decode, WAV, Atlas POST |
-| `.cursorrules` | SI units, 8-qubit grid, QPAM rules |
+| `src/hamiltonian.py` | Grid, masses, sparse H = T + V |
+| `src/quantum_sim.py` | Exact exponential and the split-operator circuit |
+| `src/rates.py` | Qualitative Arrhenius rate, k_tunnel, and H/D ratio |
+| `src/moth_sonification.py` | Tunneling beat and QPAM measured-state audio |
+| `src/atlas_client.py` | Stub Atlas client |
+| `src/pdb_parser.py` | Optional RCSB fetch for 1HED |
+| `tests/test_physics.py` | Norm, population transfer, isotope gap, circuit fidelity |
