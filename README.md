@@ -105,9 +105,13 @@ python -m src.moth_sonification # QPAM round-trip -> quantum_tunneling.wav
 
 ## Moth Atlas platform
 
-The Atlas card always shows the exact job document for the run. With no credentials the
-QPAM circuits execute on the local simulator and the card says so. To dispatch the same
-document to Atlas:
+The Atlas card always shows the exact job document for the run: statevector norm fidelity,
+QPAM encode/decode fidelity, shot-noise floor, and the real hardware cost of the QPAM circuit
+(its depth and CX count after transpilation to a `{cx, u}` basis — ~497 deep with 247 CX for a
+256-sample frame, versus an abstract depth of 2 before decomposition).
+
+With no credentials the QPAM circuits execute on the local simulator and the card says so. To
+dispatch the same document to Atlas:
 
 ```bash
 export MOTH_ATLAS_API_KEY="…"                 # or MOTH_API_KEY

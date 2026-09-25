@@ -131,6 +131,14 @@ class SonificationResult:
     backend: str
     used_quantumaudio: bool
     notes: List[str] = field(default_factory=list)
+    transpiled_depth: int = 0
+    """Depth of the QPAM circuit after transpilation to a ``{cx, u}`` hardware basis.
+
+    The abstract :attr:`circuit_depth` is tiny (QPAM is one state-preparation block); this is
+    the number that tells you what running the frame on real hardware would actually cost.
+    """
+    two_qubit_gate_count: int = 0
+    """CX count of the transpiled QPAM circuit — the dominant error source on hardware."""
 
     @property
     def duration_s(self) -> float:
@@ -261,39 +269,73 @@ def _reference_qpam_roundtrip(frame: np.ndarray, shots: int) -> np.ndarray:
     return 2.0 * (counts / float(shots)) * total - 1.0
 
 
-def _quantum_roundtrip(
-    frames: Sequence[np.ndarray], shots: int
-) -> tuple[np.ndarray, int, int, str, bool, List[str]]:
+@dataclass
+class _QpamBatch:
+    """Result of pushing a batch of audio frames through QPAM encode -> measure -> decode."""
+
+    wavetables: np.ndarray
+    num_qubits: int
+    circuit_depth: int
+    backend: str
+    used_quantumaudio: bool
+    notes: List[str] = field(default_factory=list)
+    transpiled_depth: int = 0
+    two_qubit_gate_count: int = 0
+
+
+def _hardware_cost(circuit: Any) -> tuple[int, int]:
+    """Transpile a QPAM circuit to a ``{cx, u}`` basis and return ``(depth, cx_count)``.
+
+    QPAM's state preparation is one opaque block until it is decomposed; transpiling reveals
+    what an actual device would have to run. Cheap for 8 qubits (~50 ms) and returns
+    ``(0, 0)`` if transpilation is unavailable, since this is reporting only.
+    """
+    try:
+        from qiskit import transpile
+
+        decomposed = transpile(circuit, basis_gates=["cx", "u"], optimization_level=0)
+        return int(decomposed.depth()), int(decomposed.count_ops().get("cx", 0))
+    except Exception:  # pragma: no cover - reporting must never break the render
+        return 0, 0
+
+
+def _quantum_roundtrip(frames: Sequence[np.ndarray], shots: int) -> _QpamBatch:
     """Run every frame through QPAM encode -> measure -> decode.
 
-    Returns ``(wavetables, num_qubits, circuit_depth, backend, used_quantumaudio, notes)``.
-    Falls back to :func:`_reference_qpam_roundtrip` if ``quantumaudio`` is missing or raises.
+    Falls back to :func:`_reference_qpam_roundtrip` if ``quantumaudio`` is missing or raises,
+    so a broken install costs you audio quality rather than the whole demo.
     """
     notes: List[str] = []
     decoded_frames: List[np.ndarray] = []
     num_qubits = int(np.log2(len(frames[0])))
     circuit_depth = 0
+    transpiled_depth = 0
+    cx_count = 0
 
     if QUANTUMAUDIO_AVAILABLE:
         try:
             # quantumaudio narrates its register allocation on stdout; keep the logs readable.
             with contextlib.redirect_stdout(io.StringIO()):
-                for frame in frames:
+                for index, frame in enumerate(frames):
                     circuit = encode_qpam(frame)
                     num_qubits = int(getattr(circuit, "num_qubits", num_qubits))
                     circuit_depth = max(circuit_depth, int(circuit.depth()))
+                    if index == 0:
+                        transpiled_depth, cx_count = _hardware_cost(circuit)
                     decoded_frames.append(decode_qpam(circuit, shots=shots))
             notes.append(
                 f"Encoded {len(frames)} frames with quantumaudio {QUANTUMAUDIO_VERSION} "
                 f"(QPAM, {num_qubits} qubits, {shots} shots/frame)."
             )
-            return (
-                np.vstack(decoded_frames),
-                num_qubits,
-                circuit_depth,
-                "quantumaudio/aer-simulator",
-                True,
-                notes,
+            return _QpamBatch(
+                wavetables=np.vstack(decoded_frames),
+                num_qubits=num_qubits,
+                circuit_depth=circuit_depth,
+                backend="quantumaudio/aer-simulator",
+                used_quantumaudio=True,
+                notes=notes,
+                transpiled_depth=transpiled_depth,
+                two_qubit_gate_count=cx_count,
             )
         except Exception as exc:  # pragma: no cover - keeps the live demo alive
             notes.append(f"quantumaudio QPAM path failed ({exc!s}); using reference QPAM.")
@@ -304,13 +346,13 @@ def _quantum_roundtrip(
 
     for frame in frames:
         decoded_frames.append(_reference_qpam_roundtrip(frame, shots=shots))
-    return (
-        np.vstack(decoded_frames),
-        num_qubits,
-        circuit_depth,
-        "local-qpam-reference",
-        False,
-        notes,
+    return _QpamBatch(
+        wavetables=np.vstack(decoded_frames),
+        num_qubits=num_qubits,
+        circuit_depth=circuit_depth,
+        backend="local-qpam-reference",
+        used_quantumaudio=False,
+        notes=notes,
     )
 
 
@@ -484,10 +526,9 @@ def sonify_tunneling_state(
         quantum provenance of the render.
     """
     frame = statevector_to_audio_frame(statevector)
-    tables, num_qubits, depth, backend, used_qa, notes = _quantum_roundtrip([frame], shots=shots)
-    fidelity = _frame_fidelity(frame, tables[0])
+    batch = _quantum_roundtrip([frame], shots=shots)
     samples = wavetable_synthesis(
-        tables,
+        batch.wavetables,
         sample_rate=sample_rate,
         duration_s=duration_s,
         base_pitch_hz=base_pitch_hz,
@@ -496,15 +537,17 @@ def sonify_tunneling_state(
         wav_bytes=to_wav_bytes(samples, sample_rate=sample_rate),
         samples=samples,
         sample_rate=int(sample_rate),
-        wavetables=tables,
-        num_qubits=num_qubits,
-        circuit_depth=depth,
+        wavetables=batch.wavetables,
+        num_qubits=batch.num_qubits,
+        circuit_depth=batch.circuit_depth,
         shots=int(shots),
-        encode_decode_fidelity=fidelity,
+        encode_decode_fidelity=_frame_fidelity(frame, batch.wavetables[0]),
         base_pitch_hz=float(base_pitch_hz),
-        backend=backend,
-        used_quantumaudio=used_qa,
-        notes=notes,
+        backend=batch.backend,
+        used_quantumaudio=batch.used_quantumaudio,
+        notes=batch.notes,
+        transpiled_depth=batch.transpiled_depth,
+        two_qubit_gate_count=batch.two_qubit_gate_count,
     )
 
 
@@ -555,8 +598,10 @@ def sonify_tunneling_trajectory(
         np.linspace(0, len(statevectors) - 1, max(int(num_frames), 1)).round().astype(int)
     )
     frames = [statevector_to_audio_frame(statevectors[i]) for i in indices]
-    tables, num_qubits, depth, backend, used_qa, notes = _quantum_roundtrip(frames, shots=shots)
-    fidelity = float(np.mean([_frame_fidelity(f, t) for f, t in zip(frames, tables)]))
+    batch = _quantum_roundtrip(frames, shots=shots)
+    fidelity = float(
+        np.mean([_frame_fidelity(f, t) for f, t in zip(frames, batch.wavetables)])
+    )
 
     pitch_curve = None
     if acceptor_population is not None:
@@ -565,13 +610,13 @@ def sonify_tunneling_trajectory(
             pitch_curve = 1.0 + pitch_glide * population[indices.clip(0, population.size - 1)]
 
     samples = wavetable_synthesis(
-        tables,
+        batch.wavetables,
         sample_rate=sample_rate,
         duration_s=duration_s,
         base_pitch_hz=base_pitch_hz,
         pitch_curve=pitch_curve,
     )
-    notes.append(
+    batch.notes.append(
         f"Rendered {len(frames)} wavetable morph frames -> {duration_s:.1f} s of audio "
         f"at {sample_rate} Hz (base pitch {base_pitch_hz:.1f} Hz)."
     )
@@ -579,15 +624,17 @@ def sonify_tunneling_trajectory(
         wav_bytes=to_wav_bytes(samples, sample_rate=sample_rate),
         samples=samples,
         sample_rate=int(sample_rate),
-        wavetables=tables,
-        num_qubits=num_qubits,
-        circuit_depth=depth,
+        wavetables=batch.wavetables,
+        num_qubits=batch.num_qubits,
+        circuit_depth=batch.circuit_depth,
         shots=int(shots),
         encode_decode_fidelity=fidelity,
         base_pitch_hz=float(base_pitch_hz),
-        backend=backend,
-        used_quantumaudio=used_qa,
-        notes=notes,
+        backend=batch.backend,
+        used_quantumaudio=batch.used_quantumaudio,
+        notes=batch.notes,
+        transpiled_depth=batch.transpiled_depth,
+        two_qubit_gate_count=batch.two_qubit_gate_count,
     )
 
 
@@ -638,6 +685,8 @@ def build_atlas_job_payload(
             "active_backend": sonification.backend,
             "num_qubits": sonification.num_qubits,
             "circuit_depth": sonification.circuit_depth,
+            "transpiled_depth_cx_u_basis": sonification.transpiled_depth,
+            "two_qubit_gate_count": sonification.two_qubit_gate_count,
             "circuits_submitted": int(sonification.wavetables.shape[0]),
             "shots_per_circuit": sonification.shots,
             "total_shots": int(sonification.shots * sonification.wavetables.shape[0]),

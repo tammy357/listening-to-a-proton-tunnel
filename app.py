@@ -475,7 +475,14 @@ def render_audio_section(result: TunnelingResult, params: Dict[str, Any]) -> Non
         metric_cols = st.columns(4)
         metric_cols[0].metric("QPAM Fidelity", f"{sonification.encode_decode_fidelity:.4f}")
         metric_cols[1].metric("Register", f"{sonification.num_qubits} qubits")
-        metric_cols[2].metric("Circuit Depth", str(sonification.circuit_depth))
+        metric_cols[2].metric(
+            "Circuit Depth",
+            str(sonification.transpiled_depth or sonification.circuit_depth),
+            f"{sonification.two_qubit_gate_count} CX",
+            delta_color="off",
+            help="Depth of the QPAM state-preparation circuit transpiled to a {cx, u} "
+            f"hardware basis (abstract depth: {sonification.circuit_depth}).",
+        )
         metric_cols[3].metric("Audio", f"{sonification.duration_s:.1f} s")
         st.download_button(
             "⬇️ Download WAV",
