@@ -56,7 +56,7 @@ def main() -> None:
         page_title="Listening to Quantum Tunneling",
         page_icon="⚡",
         layout="wide",
-        initial_sidebar_state="expanded",
+        initial_sidebar_state="auto",
     )
     _inject_css()
     controls = _sidebar()
