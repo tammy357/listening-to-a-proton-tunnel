@@ -1,4 +1,4 @@
-"""Exact grid evolution of the localized tunneling doublet.
+"""Grid evolution of the localized tunneling doublet.
 
 The initial state is the standard two-level packet
 
@@ -11,7 +11,13 @@ T_tun = h / (E1 − E0).
 
 ``evolve_exact`` propagates that state with ``scipy.linalg.expm``. That is a
 classical numerical simulation of the Schrödinger equation on the grid, used
-as ground truth. It is not a quantum-circuit execution.
+as ground truth.
+
+``split_operator_circuit`` is the standard quantum algorithm for the same
+equation: a Trotter product of diagonal potential phases and a kinetic phase
+in the Fourier basis. The quantum Fourier transform supplies that basis. The
+local Trotter error of one symmetric step is O(dt³), so over a fixed time
+the error shrinks as n_steps grows (globally O(1/n_steps²)).
 
 The recorded clock is in seconds, and also in units of T_tun. The default
 window is 0 to 3 tunneling periods at 200 steps.
@@ -27,9 +33,11 @@ from scipy.linalg import expm
 from .hamiltonian import (
     HBAR_J_S,
     JOULE_PER_EV,
+    QUBITS,
     ProtonHamiltonian,
     build_hamiltonian,
     lowest_eigenstates,
+    particle_mass,
     tunneling_splitting,
 )
 
@@ -55,6 +63,8 @@ class TunnelingEvolution:
         final_density: |ψ|² per grid site at the last sample.
         survival_probability: |⟨ψ(0)|ψ(t_final)⟩|².
         energies_j: Lowest eigenenergies used to build ψ(0), in joules.
+        states: State at every sample when ``evolve_exact(..., keep_states=True)``.
+            ``states[k]`` is ψ(k Δt). ``None`` when the states were not stored.
     """
 
     times_s: np.ndarray
@@ -70,6 +80,7 @@ class TunnelingEvolution:
     final_density: np.ndarray
     survival_probability: float
     energies_j: np.ndarray
+    states: np.ndarray | None = None
 
 
 def donor_localized_state(
@@ -105,6 +116,7 @@ def evolve_exact(
     mass: float | str = "H",
     n_periods: float = DEFAULT_PERIODS,
     n_steps: int = DEFAULT_STEPS,
+    keep_states: bool = False,
 ) -> tuple[ProtonHamiltonian, TunnelingEvolution]:
     """Ground-truth evolution by a classical matrix exponential.
 
@@ -127,6 +139,7 @@ def evolve_exact(
         n_periods: Length of the run in units of T_tun.
         n_steps: Number of exponential steps. The record has ``n_steps + 1``
             samples, including t = 0.
+        keep_states: When True, store ψ at every sample on ``states``.
 
     Returns:
         The Hamiltonian that was evolved, and the population record.
@@ -160,9 +173,14 @@ def evolve_exact(
     donor = np.empty(n_steps + 1, dtype=np.float64)
     acceptor = np.empty(n_steps + 1, dtype=np.float64)
     norms = np.empty(n_steps + 1, dtype=np.float64)
+    states = (
+        np.empty((n_steps + 1, psi0.size), dtype=np.complex128) if keep_states else None
+    )
     donor_mask = model.x_m < 0.0
 
     for frame in range(n_steps + 1):
+        if states is not None:
+            states[frame] = psi
         norms[frame] = float(np.linalg.norm(psi))
         probability = np.abs(psi) ** 2
         times[frame] = frame * dt_s
@@ -187,6 +205,7 @@ def evolve_exact(
         final_density=np.abs(final) ** 2,
         survival_probability=float(np.abs(overlap) ** 2),
         energies_j=energies,
+        states=states,
     )
     return model, evolution
 
@@ -213,3 +232,215 @@ def evolve_tunneling(
         n_periods=n_periods,
         n_steps=n_steps,
     )
+
+
+def _strang_diagonals(
+    potential, mass: float | str, dx: float, dt: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Position half-step and kinetic full-step phases, both on the grid.
+
+    The kinetic phases use the wave numbers that Qiskit's QFT diagonalizes.
+    On an N-point grid the QFT is
+
+        QFT|j⟩ = N^(−1/2) Σ_k exp(+2πi j k / N) |k⟩,
+
+    which is ``sqrt(N) * numpy.fft.ifft`` in little-endian index order. The
+    matching wave numbers are ``k = 2π * fftfreq(N, dx)`` in rad/m, including
+    the negative aliases. The kinetic symbol is then exp(−i ℏ k² dt / 2m).
+    """
+
+    samples = np.asarray(potential, dtype=np.float64)
+    if samples.ndim != 1 or samples.size < 2:
+        raise ValueError("Potential must be a one-dimensional grid of length at least 2.")
+    spacing = float(dx)
+    step = float(dt)
+    if spacing <= 0:
+        raise ValueError("dx must be positive.")
+    if step <= 0:
+        raise ValueError("dt must be positive.")
+    mass_kg = particle_mass(mass)
+    half = np.exp(-1j * samples * (step / (2.0 * HBAR_J_S)))
+    wave_numbers = 2.0 * np.pi * np.fft.fftfreq(samples.size, d=spacing)
+    kinetic = np.exp(-1j * HBAR_J_S * (wave_numbers**2) * step / (2.0 * mass_kg))
+    # Diagonal gates require entries on the unit circle.
+    half = half / np.abs(half)
+    kinetic = kinetic / np.abs(kinetic)
+    return half, kinetic
+
+
+def split_operator_numpy(
+    psi: np.ndarray,
+    potential,
+    mass: float | str,
+    dx: float,
+    dt: float,
+    n_steps: int,
+) -> np.ndarray:
+    """One symmetric Trotter product, applied with NumPy FFTs.
+
+    Each step is the Strang splitting of exp(−i(T+V)dt/ℏ):
+
+        exp(−i V dt / 2ℏ) · F† · exp(−i ℏ k² dt / 2m) · F · exp(−i V dt / 2ℏ),
+
+    where F is the QFT. In NumPy that Fourier transform is
+    ``sqrt(N) * ifft`` and its inverse is ``fft / sqrt(N)``, which is the
+    same convention as ``qiskit.circuit.library.QFTGate`` in little-endian
+    order. This is the array-level reference for ``split_operator_circuit``.
+
+    The splitting is exact only as dt → 0. Over a fixed interval the error
+    falls as n_steps grows.
+    """
+
+    if int(n_steps) < 1:
+        raise ValueError("At least one Trotter step is required.")
+    state = np.array(psi, dtype=np.complex128, copy=True)
+    half, kinetic = _strang_diagonals(potential, mass, dx, dt)
+    if state.shape != half.shape:
+        raise ValueError("State and potential must share the grid length.")
+    scale = np.sqrt(state.size)
+    for _ in range(int(n_steps)):
+        state *= half
+        state = np.fft.ifft(state) * scale
+        state *= kinetic
+        state = np.fft.fft(state) / scale
+        state *= half
+    return state
+
+
+def _append_diagonal(circuit, phases: np.ndarray, qubits) -> None:
+    """Append a diagonal phase gate, using whichever class this Qiskit ships.
+
+    Qiskit 2.1 deprecated the ``Diagonal`` circuit in favour of
+    ``DiagonalGate``. Both apply ``diag[i]`` to the little-endian basis
+    state ``|i⟩``.
+    """
+
+    import qiskit.circuit.library as library
+
+    if hasattr(library, "DiagonalGate"):
+        circuit.append(library.DiagonalGate(phases), qubits)
+        return
+    if hasattr(library, "Diagonal"):
+        circuit.compose(library.Diagonal(phases), qubits, inplace=True)
+        return
+    raise ImportError("This Qiskit install has neither DiagonalGate nor Diagonal.")
+
+
+def _append_qft(circuit, n_qubits: int, qubits, inverse: bool) -> None:
+    """Append the library QFT, or its inverse, in little-endian order.
+
+    ``QFTGate`` is the current class. The older ``QFT`` circuit implements
+    the same transform and is used only when the gate class is absent.
+    """
+
+    import qiskit.circuit.library as library
+
+    if hasattr(library, "QFTGate"):
+        gate = library.QFTGate(n_qubits)
+        circuit.append(gate.inverse() if inverse else gate, qubits)
+        return
+    qft = library.QFT(n_qubits, do_swaps=True)
+    block = qft.inverse() if inverse else qft
+    circuit.compose(block, qubits, inplace=True)
+
+
+def split_operator_circuit(potential, mass: float | str, dx: float, dt: float, n_steps: int):
+    """Trotter circuit for the Schrödinger equation on the 8-qubit grid.
+
+    This is the standard quantum algorithm for a Hamiltonian H = T + V on a
+    uniform grid. One symmetric Trotter step is
+
+        Diagonal(exp(−i V dt / 2ℏ))
+        → QFT
+        → Diagonal(exp(−i ℏ k² dt / 2m))
+        → QFT†
+        → Diagonal(exp(−i V dt / 2ℏ)).
+
+    The kinetic diagonal is written in the momentum ordering of Qiskit's QFT
+    (the same order as ``numpy.fft.fftfreq``). Qubits are little-endian, so
+    basis index i is grid site i.
+
+    Repeating the step ``n_steps`` times approximates exp(−i H t / ℏ) with
+    t = n_steps · dt. The local error of the symmetric product is O(dt³),
+    and the error on a fixed interval shrinks as n_steps grows, globally as
+    O(1/n_steps²).
+
+    Args:
+        potential: V(x) samples in joules, length 256.
+        mass: ``"H"``, ``"D"``, ``"T"``, or a mass in kilograms.
+        dx: Grid spacing in metres.
+        dt: Duration of one Trotter step, in seconds.
+        n_steps: How many times to repeat the step.
+
+    Returns:
+        A ``QuantumCircuit`` on 8 qubits. It does not include state preparation.
+    """
+
+    from qiskit import QuantumCircuit
+
+    if int(n_steps) < 1:
+        raise ValueError("At least one Trotter step is required.")
+    half, kinetic = _strang_diagonals(potential, mass, dx, dt)
+    if half.size != 2**QUBITS:
+        raise ValueError(
+            f"split_operator_circuit expects the {QUBITS}-qubit grid "
+            f"({2**QUBITS} samples), got {half.size}."
+        )
+    qubits = range(QUBITS)
+    step = QuantumCircuit(QUBITS, name="trotter_step")
+    _append_diagonal(step, half, qubits)
+    _append_qft(step, QUBITS, qubits, inverse=False)
+    _append_diagonal(step, kinetic, qubits)
+    _append_qft(step, QUBITS, qubits, inverse=True)
+    _append_diagonal(step, half, qubits)
+    if int(n_steps) == 1:
+        return step
+    circuit = QuantumCircuit(QUBITS, name="split_operator")
+    for _ in range(int(n_steps)):
+        circuit.compose(step, inplace=True)
+    return circuit
+
+
+def evolve_split_operator(
+    psi0: np.ndarray,
+    potential,
+    mass: float | str,
+    dx: float,
+    dt: float,
+    n_steps: int,
+    sample_at: list[int] | tuple[int, ...] | None = None,
+) -> dict[int, np.ndarray]:
+    """Prepare ψ(0) and apply the split-operator circuit.
+
+    The initial amplitudes are loaded with ``StatePreparation``. Evolution
+    uses ``Statevector.from_instruction`` for that preparation and
+    ``Statevector.evolve`` for each Trotter step. Returned arrays are copies
+    of the statevector data at the requested step counts (0 is the prepared
+    state, before any Trotter step).
+    """
+
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import StatePreparation
+    from qiskit.quantum_info import Statevector
+
+    steps = int(n_steps)
+    if steps < 1:
+        raise ValueError("At least one Trotter step is required.")
+    wanted = {steps} if sample_at is None else {int(frame) for frame in sample_at}
+    if any(frame < 0 or frame > steps for frame in wanted):
+        raise ValueError("sample_at must lie between 0 and n_steps.")
+
+    amplitudes = np.asarray(psi0, dtype=np.complex128)
+    prepared = QuantumCircuit(QUBITS)
+    prepared.append(StatePreparation(Statevector(amplitudes)), range(QUBITS))
+    state = Statevector.from_instruction(prepared)
+    samples: dict[int, np.ndarray] = {}
+    if 0 in wanted:
+        samples[0] = np.array(state.data, dtype=np.complex128, copy=True)
+
+    step = split_operator_circuit(potential, mass, dx, dt, n_steps=1)
+    for frame in range(1, steps + 1):
+        state = state.evolve(step)
+        if frame in wanted:
+            samples[frame] = np.array(state.data, dtype=np.complex128, copy=True)
+    return samples
