@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Experience</title>
+<style>
+  html, body {
+    height: 100%;
+    margin: 0;
+    background: #0e0e10;
+    color: #d9d6ee;
+    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+  #app {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px 4px;
+    flex-wrap: wrap;
+  }
+  .orbs { display: flex; gap: 8px; }
+  .orb {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    border: 1px solid #1f2a8a;
+    background: radial-gradient(circle at 35% 30%, #9aa0ff, #1f2a8a 58%, #12121a 80%);
+    color: #f4f2ff;
+    font: 600 13px/36px ui-monospace, Menlo, Consolas, monospace;
+    cursor: pointer;
+    box-shadow: inset 0 0 8px rgba(180, 190, 255, 0.25);
+  }
+  .orb[aria-pressed="true"] {
+    box-shadow: 0 0 16px rgba(150, 170, 255, 0.85), inset 0 0 10px rgba(220, 220, 255, 0.45);
+  }
+  #begin {
+    margin-left: auto;
+    border: 1px solid #1f2a8a;
+    background: #141428;
+    color: #e4e2ff;
+    border-radius: 999px;
+    padding: 8px 14px;
+    font: 12px ui-monospace, Menlo, Consolas, monospace;
+    cursor: pointer;
+  }
+  #begin:disabled { opacity: 0.7; cursor: default; }
+  #scale {
+    color: #9d99b8;
+    font-size: 11px;
+    letter-spacing: 0.02em;
+  }
+  canvas {
+    flex: 1;
+    width: 100%;
+    min-height: 0;
+    display: block;
+    touch-action: none;
+    cursor: crosshair;
+  }
+  #caption {
+    margin: 0;
+    padding: 2px 14px 0;
+    text-align: center;
+    font-size: 12px;
+    color: #c9c6e2;
+    opacity: 0;
+    animation: rise 1.8s ease 0.5s forwards;
+  }
+  footer {
+    margin: 0;
+    padding: 3px 14px 8px;
+    text-align: center;
+    font-size: 11px;
+    color: #8e8aa6;
+  }
+  @keyframes rise { to { opacity: 1; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="orbs" id="orbs"></div>
+    <span id="scale"></span>
+    <button id="begin" type="button">Begin</button>
+  </header>
+  <canvas id="view"></canvas>
+  <p id="caption">Tap to observe. Headphones on: listen to the proton pass through the wall.</p>
+  <footer>Time is slowed for human perception. Period ratios between isotopes are physical.</footer>
+</div>
+<script id="experience-data" type="application/json">__EXPERIENCE_DATA__</script>
+<script>
+const DATA = JSON.parse(document.getElementById("experience-data").textContent);
+const ISOTOPES = ["H", "D", "T"];
+const F0 = DATA.isotopes.H.f0_hz;
+const NPART = 150;
+const TAU = Math.PI * 2;
+
+const canvas = document.getElementById("view");
+const ctx = canvas.getContext("2d", { alpha: false });
+const scaleLabel = document.getElementById("scale");
+scaleLabel.textContent = DATA.time_scale_label;
+
+const clocks = { H: 0, D: 0, T: 0 };
+const mirrored = { H: false, D: false, T: false };
+let active = "H";
+let previous = "H";
+let mix = 1;
+let flash = 0;
+let audio = null;
+const trails = Array.from({ length: NPART }, () => []);
+
+const glow = document.createElement("canvas");
+function glowLayer(w, h) {
+  if (glow.width !== w || glow.height !== h) {
+    glow.width = w;
+    glow.height = h;
+  }
+  return glow;
+}
+
+let densityMax = 1e-4;
+for (const name of ISOTOPES) {
+  for (const frame of DATA.isotopes[name].density) {
+    for (let i = 0; i < frame.length; i++) {
+      if (frame[i] > densityMax) densityMax = frame[i];
+    }
+  }
+}
+
+const orbs = document.getElementById("orbs");
+for (const name of ISOTOPES) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "orb";
+  button.textContent = name;
+  button.setAttribute("aria-pressed", name === active ? "true" : "false");
+  button.addEventListener("click", () => selectIsotope(name));
+  orbs.appendChild(button);
+}
+
+document.getElementById("begin").addEventListener("click", (event) => {
+  event.stopPropagation();
+  beginAudio();
+});
+canvas.addEventListener("pointerdown", (event) => {
+  if (event.button !== 0 && event.pointerType === "mouse") return;
+  measure();
+});
+
+function selectIsotope(name) {
+  if (name === active && mix === 1) return;
+  previous = mix < 1 ? active : active;
+  active = name;
+  mix = 0;
+  for (const button of orbs.children) {
+    button.setAttribute("aria-pressed", button.textContent === name ? "true" : "false");
+  }
+  if (audio) retune(audio.ctx.currentTime);
+}
+
+function measure() {
+  mix = 1;
+  previous = active;
+  const now = displayed(1);
+  const donorP = Math.min(1, Math.max(0, now.donor));
+  const donorWell = Math.random() < donorP;
+  mirrored[active] = !donorWell;
+  clocks[active] = 0;
+  flash = 1;
+  trails.forEach((trail) => { trail.length = 0; });
+  if (audio) ringBell();
+}
+
+function displayed(blend) {
+  const from = sampleMovie(previous, clocks[previous], mirrored[previous]);
+  const to = sampleMovie(active, clocks[active], mirrored[active]);
+  const t = smooth(blend);
+  return blendFields(from, to, t);
+}
+
+function sampleMovie(name, time, mirror) {
+  const movie = DATA.isotopes[name];
+  const frames = movie.density.length;
+  const span = movie.screen_period_s * DATA.periods;
+  let wrapped = time % span;
+  if (wrapped < 0) wrapped += span;
+  const pos = wrapped / span * (frames - 1);
+  const i0 = Math.floor(pos);
+  const i1 = Math.min(frames - 1, i0 + 1);
+  const local = pos - i0;
+  const n = movie.density[0].length;
+  const density = new Float32Array(n);
+  const phase = new Float32Array(n);
+  const d0 = movie.density[i0];
+  const d1 = movie.density[i1];
+  const p0 = movie.phase[i0];
+  const p1 = movie.phase[i1];
+  for (let i = 0; i < n; i++) {
+    const j = mirror ? n - 1 - i : i;
+    density[i] = d0[j] * (1 - local) + d1[j] * local;
+    phase[i] = lerpAngle(p0[j], p1[j], local);
+  }
+  let donor = movie.donor[i0] * (1 - local) + movie.donor[i1] * local;
+  let acceptor = movie.acceptor[i0] * (1 - local) + movie.acceptor[i1] * local;
+  if (mirror) {
+    const swap = donor;
+    donor = acceptor;
+    acceptor = swap;
+  }
+  return { density, phase, donor, acceptor, movie };
+}
+
+function blendFields(from, to, t) {
+  const n = from.density.length;
+  const density = new Float32Array(n);
+  const phase = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    density[i] = from.density[i] * (1 - t) + to.density[i] * t;
+    phase[i] = lerpAngle(from.phase[i], to.phase[i], t);
+  }
+  return {
+    density,
+    phase,
+    donor: from.donor * (1 - t) + to.donor * t,
+    acceptor: from.acceptor * (1 - t) + to.acceptor * t,
+    movie: t < 0.5 ? from.movie : to.movie,
+  };
+}
+
+function lerpAngle(a, b, t) {
+  let d = b - a;
+  while (d > Math.PI) d -= TAU;
+  while (d < -Math.PI) d += TAU;
+  return a + d * t;
+}
+
+function smooth(t) {
+  const x = Math.min(1, Math.max(0, t));
+  return x * x * (3 - 2 * x);
+}
+
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = Math.max(2, Math.floor(rect.width * dpr));
+  canvas.height = Math.max(2, Math.floor(rect.height * dpr));
+}
+window.addEventListener("resize", resize);
+resize();
+
+let last = performance.now();
+function tick(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  for (const name of ISOTOPES) clocks[name] += dt;
+  if (mix < 1) mix = Math.min(1, mix + dt / 0.65);
+  if (flash > 0) flash = Math.max(0, flash - dt * 1.8);
+  const state = displayed(mix);
+  draw(state);
+  if (audio) followPan(state);
+  if (!window.__experienceReady) window.__experienceReady = performance.now();
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+function draw(state) {
+  const w = canvas.width;
+  const h = canvas.height;
+  const pad = Math.floor(w * 0.04);
+  const base = h * 0.74;
+  const n = state.density.length;
+  const xs = DATA.x;
+  const vs = DATA.v;
+  ctx.globalCompositeOperation = "source-over";
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#0e0e10";
+  ctx.fillRect(0, 0, w, h);
+  const wash = ctx.createRadialGradient(w * 0.5, base, h * 0.05, w * 0.5, base, w * 0.55);
+  wash.addColorStop(0, "rgba(31, 42, 138, 0.45)");
+  wash.addColorStop(1, "rgba(14, 14, 16, 0)");
+  ctx.fillStyle = wash;
+  ctx.fillRect(0, 0, w, h);
+
+  let vMin = Infinity;
+  let vTop = 0;
+  for (let i = 0; i < n; i++) {
+    if (Math.abs(xs[i]) <= 1.05) {
+      if (vs[i] < vMin) vMin = vs[i];
+      if (Math.abs(xs[i]) < 0.08) vTop = Math.max(vTop, vs[i]);
+    }
+  }
+  const vSpan = Math.max(vTop - vMin, 0.05);
+  ctx.beginPath();
+  ctx.lineWidth = Math.max(1, h * 0.004);
+  ctx.strokeStyle = "rgba(150, 160, 230, 0.7)";
+  for (let i = 0; i < n; i++) {
+    const x = pad + (i / (n - 1)) * (w - 2 * pad);
+    const clipped = Math.min(Math.max(vs[i], vMin), vTop + vSpan * 0.35);
+    const y = base - ((clipped - vMin) / (vSpan * 1.35)) * h * 0.22;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  const layer = glowLayer(w, h);
+  const g = layer.getContext("2d");
+  g.clearRect(0, 0, w, h);
+  g.globalCompositeOperation = "lighter";
+  for (let i = 0; i < n - 1; i++) {
+    const x0 = pad + (i / (n - 1)) * (w - 2 * pad);
+    const x1 = pad + ((i + 1) / (n - 1)) * (w - 2 * pad);
+    const y0 = base - (state.density[i] / densityMax) * h * 0.46;
+    const y1 = base - (state.density[i + 1] / densityMax) * h * 0.46;
+    const hue = ((state.phase[i] + Math.PI) / TAU) * 360;
+    g.fillStyle = "hsla(" + hue.toFixed(1) + ", 82%, 56%, 0.86)";
+    g.beginPath();
+    g.moveTo(x0, base);
+    g.lineTo(x0, y0);
+    g.lineTo(x1, y1);
+    g.lineTo(x1, base);
+    g.fill();
+  }
+  ctx.globalCompositeOperation = "source-over";
+  ctx.shadowBlur = Math.max(18, h * 0.04);
+  ctx.shadowColor = "rgba(150, 130, 255, 0.55)";
+  ctx.drawImage(layer, 0, 0);
+  ctx.shadowBlur = 0;
+  ctx.globalCompositeOperation = "lighter";
+  ctx.globalAlpha = 0.4;
+  ctx.drawImage(layer, 0, 0);
+  ctx.globalAlpha = 1;
+
+  const cdf = cumulative(state.density);
+  ctx.lineWidth = Math.max(1, h * 0.003);
+  for (let p = 0; p < NPART; p++) {
+    const q = (p + 0.5) / NPART;
+    const index = quantile(cdf, q);
+    const x = pad + (index / (n - 1)) * (w - 2 * pad);
+    const y = base - (state.density[index] / densityMax) * h * 0.46
+      - (4 + 10 * Math.sin(clocks[active] * 3 + p)) * (h / 700);
+    const trail = trails[p];
+    trail.push(x, y);
+    if (trail.length > 16) trail.splice(0, trail.length - 16);
+    const hue = ((state.phase[index] + Math.PI) / TAU) * 360;
+    ctx.strokeStyle = "hsla(" + hue.toFixed(1) + ", 80%, 76%, " + (0.35 + flash * 0.4).toFixed(3) + ")";
+    ctx.beginPath();
+    for (let k = 0; k < trail.length; k += 2) {
+      if (k === 0) ctx.moveTo(trail[k], trail[k + 1]);
+      else ctx.lineTo(trail[k], trail[k + 1]);
+    }
+    ctx.stroke();
+    ctx.fillStyle = "hsla(" + hue.toFixed(1) + ", 90%, 78%, " + (0.8 + flash * 0.2).toFixed(3) + ")";
+    ctx.beginPath();
+    ctx.arc(x, y, Math.max(1.8, h * 0.0045) * (1 + flash), 0, TAU);
+    ctx.fill();
+  }
+
+  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = "#c8c4e4";
+  ctx.font = Math.max(12, Math.floor(h * 0.028)) + "px ui-monospace, Menlo, Consolas, monospace";
+  ctx.fillText("donor", pad, base + h * 0.08);
+  const acceptorLabel = "acceptor";
+  ctx.fillText(acceptorLabel, w - pad - ctx.measureText(acceptorLabel).width, base + h * 0.08);
+  const movie = DATA.isotopes[active];
+  const readout = active + "   " + movie.period_fs.toFixed(1) + " fs   ΔE " + movie.deltaE_meV.toFixed(2) + " meV   exact";
+  ctx.fillStyle = "#eeeafc";
+  ctx.fillText(readout, pad, h * 0.08);
+}
+
+function cumulative(density) {
+  const cdf = new Float64Array(density.length);
+  let sum = 0;
+  for (let i = 0; i < density.length; i++) sum += density[i];
+  if (sum <= 0) {
+    for (let i = 0; i < density.length; i++) cdf[i] = (i + 1) / density.length;
+    return cdf;
+  }
+  let acc = 0;
+  for (let i = 0; i < density.length; i++) {
+    acc += density[i] / sum;
+    cdf[i] = acc;
+  }
+  return cdf;
+}
+
+function quantile(cdf, q) {
+  let lo = 0;
+  let hi = cdf.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (cdf[mid] < q) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+function beginAudio() {
+  if (audio) return;
+  const ctx = new AudioContext();
+  const master = ctx.createGain();
+  master.gain.setValueAtTime(0.0001, ctx.currentTime);
+  master.connect(ctx.destination);
+  master.gain.setTargetAtTime(0.42, ctx.currentTime, 0.18);
+
+  const voice = ctx.createGain();
+  voice.gain.setValueAtTime(1, ctx.currentTime);
+  const panner = ctx.createStereoPanner();
+  panner.pan.setValueAtTime(-1, ctx.currentTime);
+  const dry = ctx.createGain();
+  dry.gain.setValueAtTime(0.85, ctx.currentTime);
+  const wet = ctx.createGain();
+  wet.gain.setValueAtTime(0.28, ctx.currentTime);
+  const convolver = ctx.createConvolver();
+  convolver.buffer = decayingNoise(ctx);
+  voice.connect(panner);
+  panner.connect(dry);
+  panner.connect(convolver);
+  convolver.connect(wet);
+  dry.connect(master);
+  wet.connect(master);
+
+  const partials = [];
+  const weights = [0.22, 0.045, 0.02, 0.18, 0.035, 0.015];
+  for (let i = 0; i < 6; i++) {
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(F0, ctx.currentTime);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.setTargetAtTime(weights[i], ctx.currentTime, 0.2);
+    osc.connect(gain);
+    gain.connect(voice);
+    osc.start();
+    partials.push(osc);
+  }
+
+  const bell = ctx.createOscillator();
+  bell.type = "sine";
+  bell.frequency.setValueAtTime(523.25, ctx.currentTime);
+  const bellGain = ctx.createGain();
+  bellGain.gain.setValueAtTime(0.0001, ctx.currentTime);
+  bell.connect(bellGain);
+  bellGain.connect(master);
+  bell.start();
+  const bell2 = ctx.createOscillator();
+  bell2.type = "sine";
+  bell2.frequency.setValueAtTime(784, ctx.currentTime);
+  const bell2Gain = ctx.createGain();
+  bell2Gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+  bell2.connect(bell2Gain);
+  bell2Gain.connect(master);
+  bell2.start();
+
+  audio = { ctx, master, panner, partials, bellGain, bell2Gain, beat: null };
+  retune(ctx.currentTime);
+  ctx.resume();
+  const begin = document.getElementById("begin");
+  begin.textContent = "Listening";
+  begin.disabled = true;
+}
+
+function retune(now) {
+  const beat = DATA.isotopes[active].f_beat_hz;
+  if (audio.beat === beat) return;
+  audio.beat = beat;
+  const freqs = [F0, F0 * 2, F0 * 3, F0 + beat, (F0 + beat) * 2, (F0 + beat) * 3];
+  for (let i = 0; i < audio.partials.length; i++) {
+    const param = audio.partials[i].frequency;
+    param.setValueAtTime(param.value, now);
+    param.setTargetAtTime(freqs[i], now, 0.12);
+  }
+}
+
+function followPan(state) {
+  const now = audio.ctx.currentTime;
+  if (audio.nextPan && now < audio.nextPan) return;
+  audio.nextPan = now + 0.05;
+  const target = Math.max(-1, Math.min(1, state.acceptor - state.donor));
+  const pan = audio.panner.pan;
+  pan.setValueAtTime(pan.value, now);
+  pan.setTargetAtTime(target, now, 0.08);
+}
+
+function ringBell() {
+  const now = audio.ctx.currentTime;
+  for (const gain of [audio.bellGain, audio.bell2Gain]) {
+    gain.gain.setTargetAtTime(0.0001, now, 0.01);
+  }
+  audio.bellGain.gain.setTargetAtTime(0.09, now + 0.02, 0.012);
+  audio.bellGain.gain.setTargetAtTime(0.0001, now + 0.08, 0.28);
+  audio.bell2Gain.gain.setTargetAtTime(0.03, now + 0.02, 0.01);
+  audio.bell2Gain.gain.setTargetAtTime(0.0001, now + 0.06, 0.16);
+}
+
+function decayingNoise(ctx) {
+  const seconds = 1.6;
+  const length = Math.floor(ctx.sampleRate * seconds);
+  const buffer = ctx.createBuffer(2, length, ctx.sampleRate);
+  for (let channel = 0; channel < 2; channel++) {
+    const data = buffer.getChannelData(channel);
+    for (let i = 0; i < length; i++) {
+      const envelope = Math.pow(1 - i / length, 2.8);
+      data[i] = (Math.random() * 2 - 1) * envelope;
+    }
+  }
+  return buffer;
+}
+</script>
+</body>
+</html>

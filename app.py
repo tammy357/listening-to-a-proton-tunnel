@@ -1,18 +1,19 @@
 """Listening bench for isotope-dependent tunneling on an 8-qubit grid.
 
-The exact propagator is ``evolve_exact``. The split-operator circuit is drawn
-on the same clock. Audio is either an artistic beat mapped from ΔE and the
-well populations, or QPAM measurements of ``|ψ|²`` frames. Atlas is not
-connected until ``AtlasClient`` returns a real payload.
+Experience plays a precomputed exact movie for H, D, and T. Lab keeps the
+split-operator comparison, the rate sketch, and the QPAM player. Atlas is
+not connected until ``AtlasClient`` returns a real payload.
 """
 
 from __future__ import annotations
 
 import html
+from pathlib import Path
 
 import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as components
 from qiskit import transpile
 
 from src.atlas_client import AtlasClient
@@ -59,6 +60,46 @@ def main() -> None:
         initial_sidebar_state="auto",
     )
     _inject_css()
+    view = st.segmented_control(
+        "View",
+        options=["Experience", "Lab"],
+        default="Experience",
+        key="app_view",
+    )
+    if view == "Lab":
+        _render_lab()
+    else:
+        _render_experience()
+
+
+def _render_experience() -> None:
+    root = Path(__file__).resolve().parent
+    template = root / "src" / "experience.html"
+    data = root / "src" / "experience_data.json"
+    stamp = (
+        template.stat().st_mtime_ns,
+        data.stat().st_mtime_ns if data.exists() else 0,
+    )
+    components.html(_experience_document(stamp), height=720, scrolling=False)
+
+
+@st.cache_data(show_spinner=False)
+def _experience_document(stamp: tuple[int, int]) -> str:
+    del stamp
+    root = Path(__file__).resolve().parent
+    template = (root / "src" / "experience.html").read_text(encoding="utf-8")
+    data_path = root / "src" / "experience_data.json"
+    if not data_path.exists():
+        from src.export_frames import write_experience_data
+
+        write_experience_data(data_path)
+    data = data_path.read_text(encoding="utf-8")
+    if "__EXPERIENCE_DATA__" not in template:
+        raise RuntimeError("experience.html is missing the data placeholder.")
+    return template.replace("__EXPERIENCE_DATA__", data, 1)
+
+
+def _render_lab() -> None:
     controls = _sidebar()
     _header()
 
