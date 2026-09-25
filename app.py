@@ -19,6 +19,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 from qiskit import transpile
 
+from src.atlas_tomography import bloch_length_shot_noise
 from src.hamiltonian import ANGSTROM_M, JOULE_PER_EV
 from src.moth_sonification import (
     DEFAULT_PITCH_HZ,
@@ -531,6 +532,12 @@ def _bank_figure() -> tuple[go.Figure | None, str]:
     return figure, note
 
 
+def _atlas_is_simulator(bank: dict) -> bool:
+    provider = str(bank.get("provider", "")).lower()
+    execution = str(bank.get("execution", "")).lower()
+    return provider == "aer" or execution == "simulator"
+
+
 def _atlas_figure() -> tuple[go.Figure | None, str, list[str]]:
     path = Path(__file__).resolve().parent / "src" / "atlas_bank.json"
     if not path.exists():
@@ -567,6 +574,21 @@ def _atlas_figure() -> tuple[go.Figure | None, str, list[str]]:
             hovertemplate="t = %{x:.3f} T_tun<br>Atlas P = %{y:.3f}<extra></extra>",
         )
     )
+    simulator = _atlas_is_simulator(bank)
+    if simulator:
+        grid = np.linspace(0.0, 1.0, 361)
+        half = 2.0 * np.array([bloch_length_shot_noise(float(t), int(shots)) for t in grid])
+        figure.add_trace(
+            go.Scatter(
+                x=np.concatenate([grid, grid[::-1]]),
+                y=np.concatenate([1.0 + half, (1.0 - half)[::-1]]),
+                fill="toself",
+                fillcolor="rgba(224, 122, 95, 0.28)",
+                line={"width": 0},
+                name="±2σ shot noise",
+                hovertemplate="t = %{x:.3f} T_tun<br>±2σ around |r| = 1<extra></extra>",
+            )
+        )
     figure.add_trace(
         go.Scatter(
             x=times,
@@ -578,19 +600,27 @@ def _atlas_figure() -> tuple[go.Figure | None, str, list[str]]:
             hovertemplate="t = %{x:.3f} T_tun<br>|r| = %{y:.3f}<extra></extra>",
         )
     )
+    kind = "simulator" if simulator else provider
     figure.update_layout(
-        title=f"Atlas tomography · {provider}/{backend} · simulator · {shots} shots",
+        title=f"Atlas tomography · {provider}/{backend} · {kind} · {shots} shots",
         height=420,
-        yaxis={"title": "Acceptor population and |r|", "range": [0, 1.05]},
+        yaxis={"title": "Acceptor population and |r|", "range": [0, 1.06]},
         xaxis={"title": "t / T_tun"},
         **_layout(top=60),
     )
     _style_axes(figure)
-    note = (
-        f"{provider}/{backend} is the Aer simulator, not a hardware QPU. "
-        f"{shots} shots at each of {len(points)} times. "
-        "Acceptor population is (1 − z) / 2 from observables X, Y, Z. Job ids:"
-    )
+    if simulator:
+        note = (
+            f"{provider}/{backend} is the Aer simulator, not a hardware QPU. "
+            f"{shots} shots on each of X, Y, and Z. "
+            "On a noiseless simulator, deviations from |r| = 1 are sampling noise, not decoherence. "
+            "Acceptor population is (1 − z) / 2 from observables X, Y, Z. Job ids:"
+        )
+    else:
+        note = (
+            f"{provider}/{backend} · {shots} shots at each of {len(points)} times. "
+            "Acceptor population is (1 − z) / 2 from observables X, Y, Z. Job ids:"
+        )
     jobs = [str(job_id) for job_id in bank.get("job_ids", [])]
     return figure, note, jobs
 

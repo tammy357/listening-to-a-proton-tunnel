@@ -7,6 +7,7 @@ Run from the repository root:
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
@@ -263,6 +264,18 @@ def test_ground_energy_and_wall_thickness_follow_mass() -> None:
     assert found["T"][1] > found["H"][1]
 
 
+def test_bloch_length_shot_noise_peaks_between_pauli_axes() -> None:
+    """|r| sampling noise is largest halfway between Y and Z, and zero on axis."""
+
+    from src.atlas_tomography import bloch_length_shot_noise
+
+    shots = 4096
+    assert bloch_length_shot_noise(0.0, shots) == 0.0
+    assert bloch_length_shot_noise(0.25, shots) < 1e-12
+    peak = bloch_length_shot_noise(0.125, shots)
+    assert abs(peak - 1.0 / math.sqrt(2.0 * shots)) < 1e-12
+
+
 def test_atlas_bank_is_an_aer_simulator() -> None:
     """The saved tomography file is Aer, with the donor at z ≈ +1."""
 
@@ -289,5 +302,6 @@ if __name__ == "__main__":
     test_split_operator_circuit_matches_exact()
     test_ground_energy_and_wall_thickness_follow_mass()
     test_two_level_gap_and_rx_populations()
+    test_bloch_length_shot_noise_peaks_between_pauli_axes()
     test_atlas_bank_is_an_aer_simulator()
     print("all physics checks passed")

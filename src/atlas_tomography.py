@@ -139,6 +139,21 @@ def bloch_from_result(payload: dict) -> dict:
     }
 
 
+def bloch_length_shot_noise(t_over_period: float, shots: int) -> float:
+    """One-sigma sampling width of ``|r|`` for ``rx(2π t/T)`` on a noiseless simulator.
+
+    ``tomography-api-v2`` counts ``shots`` per measurement circuit. One qubit
+    is measured in X, Y, and Z separately. For a pure state the radial
+    fluctuation is ``|sin(4π t/T)| / sqrt(2 shots)``. It vanishes when the
+    state is a Pauli eigenstate, because that axis is then deterministic.
+    """
+
+    if shots < 1:
+        raise ValueError("shots must be positive.")
+    theta = 2.0 * math.pi * float(t_over_period)
+    return abs(math.sin(2.0 * theta)) / math.sqrt(2.0 * shots)
+
+
 def _complete_job(client: MothClient, job_id: str, index: int, shots: int) -> str:
     """Wait for one tomography job, resubmitting when the engine asks for a retry."""
 

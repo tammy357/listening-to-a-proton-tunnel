@@ -828,22 +828,35 @@ function drawBlochSphere() {
 
   ctx.fillStyle = "rgba(228, 226, 255, 0.88)";
   ctx.font = Math.max(10, Math.floor(radius * 0.16)) + "px ui-monospace, Menlo, Consolas, monospace";
+  const simulator = Boolean(ATLAS && (ATLAS.execution === "simulator" || ATLAS.provider === "aer"));
+  const provider = ATLAS && ATLAS.provider ? ATLAS.provider : "aer";
+  const shots = ATLAS && ATLAS.shots ? ATLAS.shots : 4096;
   const lines = [];
-  if (ATLAS && (ATLAS.execution === "simulator" || ATLAS.provider === "aer")) {
-    lines.push("aer simulator");
-  }
+  let lengthLabel = "";
   if (measuredLength < 1) {
-    lines.push("coherence |r| = " + measuredLength.toFixed(2));
+    if (simulator) {
+      lengthLabel = "|r| = " + measuredLength.toFixed(2) + " · shot noise (" + shots + " shots, " + provider + " simulator)";
+    } else {
+      lengthLabel = "coherence |r| = " + measuredLength.toFixed(2);
+    }
+    lines.push(lengthLabel);
+  } else if (simulator) {
+    lines.push(provider + " simulator");
   }
   lines.forEach((line, index) => {
     const width = ctx.measureText(line).width;
-    ctx.fillText(line, cx - width * 0.5, cy - radius - 8 * dpr - (lines.length - 1 - index) * (12 * dpr));
+    let x = cx - width * 0.5;
+    const limit = canvas.width - 6 * dpr;
+    if (x + width > limit) x = limit - width;
+    if (x < 6 * dpr) x = 6 * dpr;
+    ctx.fillText(line, x, cy - radius - 8 * dpr - (lines.length - 1 - index) * (12 * dpr));
   });
   ctx.restore();
   return {
     frac,
     length: measuredLength,
     inside: measuredLength < 1,
+    label: lengthLabel,
     provider: ATLAS && ATLAS.provider ? ATLAS.provider : null,
     backend: ATLAS && ATLAS.backend ? ATLAS.backend : null,
   };
