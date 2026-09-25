@@ -4,13 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Experience</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   html, body {
     height: 100%;
     margin: 0;
     background: #0e0e10;
     color: #d9d6ee;
-    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    font-family: "JetBrains Mono", "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   }
   #app {
     position: relative;
@@ -125,31 +128,45 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 12px;
-    background: rgba(14, 14, 16, 0.94);
-    padding: 24px;
+    gap: 14px;
+    background: rgba(11, 11, 13, 0.96);
+    padding: 18px 16px 22px;
   }
   #intro[hidden] { display: none; }
+  #intro-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 12px;
+    width: min(920px, 96%);
+  }
+  #intro figure { margin: 0; }
   #intro img {
-    width: min(440px, 78vw);
-    height: auto;
-    image-rendering: auto;
-    border-radius: 12px;
-    box-shadow: 0 0 36px rgba(120, 140, 255, 0.28);
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    display: block;
+    background: #000;
+    border-radius: 10px;
+    box-shadow: 0 0 28px rgba(43, 53, 200, 0.45);
+  }
+  #intro figcaption {
+    margin-top: 6px;
+    text-align: center;
+    font-size: 11px;
+    color: #eceae4;
   }
   #intro-caption {
     margin: 0;
     text-align: center;
     font-size: 13px;
-    color: #e4e2ff;
+    color: #eceae4;
   }
-  #intro-note {
-    margin: 0;
-    max-width: 540px;
-    text-align: center;
-    font-size: 11px;
-    line-height: 1.45;
-    color: #9d99b8;
+  @media (max-height: 560px) {
+    #intro { gap: 8px; padding: 8px 10px 10px; }
+    #intro-row { gap: 8px; }
+    #intro img { max-height: 42vh; }
+    #intro figcaption { font-size: 10px; }
+    #intro-caption { font-size: 12px; }
   }
   @keyframes rise { to { opacity: 1; } }
   @keyframes isotope-note {
@@ -169,9 +186,21 @@
   </header>
   <canvas id="view"></canvas>
   <div id="intro" hidden>
-    <img id="intro-frame" alt="Teleblur frame from donor toward acceptor">
-    <p id="intro-caption">Donor → acceptor, morphed by Moth Teleblur</p>
-    <p id="intro-note">strength is the teleportation effect: a selector-qubit rotation, not a linear RGB mix. The optional mask slot was not sent.</p>
+    <div id="intro-row">
+      <figure>
+        <img id="intro-donor" alt="Donor">
+        <figcaption>donor</figcaption>
+      </figure>
+      <figure>
+        <img id="intro-teleblur" alt="Teleblur">
+        <figcaption>Teleblur</figcaption>
+      </figure>
+      <figure>
+        <img id="intro-acceptor" alt="Acceptor">
+        <figcaption>acceptor</figcaption>
+      </figure>
+    </div>
+    <p id="intro-caption">Donor → acceptor, through Moth Teleblur</p>
   </div>
   <p id="isotope-note"></p>
   <p id="caption">Tap to observe. Headphones on: listen to the proton pass through the wall.</p>
@@ -283,7 +312,9 @@ function currentE0() {
 function showIsotopeNote(name) {
   const movie = DATA.isotopes[name];
   const note = document.getElementById("isotope-note");
-  note.textContent = NAMES[name] + " · " + formatRatio(movie.period_ratio_to_h) + "× slower";
+  note.textContent = name === "H"
+    ? "hydrogen · reference"
+    : NAMES[name] + " · " + formatRatio(movie.period_ratio_to_h) + "× slower";
   note.classList.remove("show");
   void note.offsetWidth;
   note.classList.add("show");
@@ -927,10 +958,11 @@ function drawWallBracket(geom, turns) {
   ctx.stroke();
   ctx.restore();
   const caption = "wall thickness at this energy: " + turns.width.toFixed(2) + " Å";
+  const fontPx = Math.max(11, Math.floor(geom.h * 0.02));
   ctx.fillStyle = "rgba(236, 232, 255, 0.88)";
-  ctx.font = Math.max(11, Math.floor(geom.h * 0.02)) + "px ui-monospace, Menlo, Consolas, monospace";
+  ctx.font = fontPx + "px ui-monospace, Menlo, Consolas, monospace";
   const textW = ctx.measureText(caption).width;
-  ctx.fillText(caption, (x0 + x1) * 0.5 - textW * 0.5, y - tick - Math.max(4, geom.h * 0.008));
+  ctx.fillText(caption, (x0 + x1) * 0.5 - textW * 0.5, y + tick + fontPx + Math.max(2, geom.h * 0.006));
 }
 
 function drawForbiddenLabel(geom, turns) {
@@ -989,33 +1021,43 @@ function quantile(cdf, q) {
   return lo;
 }
 
+function introPanels(intro) {
+  if (!intro) return null;
+  if (Array.isArray(intro)) {
+    if (!intro.length) return null;
+    const last = intro.length - 1;
+    return {
+      donor: intro[0],
+      teleblur: intro[Math.floor(last / 2)],
+      acceptor: intro[last],
+    };
+  }
+  if (intro.donor && intro.teleblur && intro.acceptor) return intro;
+  return null;
+}
+
 function startIntro() {
-  const frames = Array.isArray(INTRO) ? INTRO : [];
+  const panels = introPanels(INTRO);
   const begin = document.getElementById("begin");
-  window.__introDone = frames.length === 0;
-  if (!frames.length) return;
+  window.__introDone = !panels;
+  if (!panels) return;
+  document.getElementById("intro-donor").src = panels.donor;
+  document.getElementById("intro-teleblur").src = panels.teleblur;
+  document.getElementById("intro-acceptor").src = panels.acceptor;
   const overlay = document.getElementById("intro");
-  const img = document.getElementById("intro-frame");
   begin.disabled = true;
   overlay.hidden = false;
   const started = performance.now();
-  function frame(now) {
-    const elapsed = (now - started) / 1000;
-    const index = Math.min(frames.length - 1, Math.floor((elapsed / 6) * frames.length));
-    if (img.getAttribute("data-i") !== String(index)) {
-      img.src = frames[index];
-      img.setAttribute("data-i", String(index));
-    }
-    window.__introIndex = index;
-    if (elapsed >= 6) {
+  function tick(now) {
+    if ((now - started) / 1000 >= 4.5) {
       overlay.hidden = true;
       begin.disabled = false;
       window.__introDone = true;
       return;
     }
-    requestAnimationFrame(frame);
+    requestAnimationFrame(tick);
   }
-  requestAnimationFrame(frame);
+  requestAnimationFrame(tick);
 }
 startIntro();
 

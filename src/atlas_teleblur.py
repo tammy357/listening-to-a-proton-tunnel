@@ -15,10 +15,11 @@ is a linear morph fraction, so the saved note says so instead of relabeling
 from __future__ import annotations
 
 import json
-import math
 import sys
+import time
 from pathlib import Path
 
+import numpy as np
 import requests
 from PIL import Image
 
@@ -29,10 +30,11 @@ if str(ROOT) not in sys.path:
 from src.moth_client import MothClient, MothError
 
 ENGINE = "telablur-v1"
-SIZE = 128
-STRENGTHS = [index / 10 for index in range(11)]
+SIZE = 512
+STRENGTHS = [0.25, 0.4, 0.5, 0.6, 0.75]
 INPUT_DIR = ROOT / "atlas_inputs"
 OUTPUT_DIR = ROOT / "atlas_outputs"
+RUN_DIR = OUTPUT_DIR / "runs"
 STRENGTH_NOTE = (
     "strength is the teleportation-effect parameter (0 to 1): a selector-qubit "
     "rotation interpolates the images at the amplitude level. Output alpha is "
@@ -42,29 +44,20 @@ STRENGTH_NOTE = (
 
 
 def _paint(path: Path, side: str) -> None:
-    """RGB double-well sketch. ``side`` is ``donor`` (left) or ``acceptor`` (right)."""
+    """Black 512 canvas with one large soft white-violet blob on one half."""
 
-    image = Image.new("RGB", (SIZE, SIZE), (14, 14, 16))
-    pixels = image.load()
-    center = (SIZE * 0.28) if side == "donor" else (SIZE * 0.72)
-    tint = (228, 162, 58) if side == "donor" else (60, 186, 166)
-    for y in range(SIZE):
-        for x in range(SIZE):
-            barrier = math.exp(-((x - SIZE * 0.5) / (SIZE * 0.06)) ** 2) * math.exp(
-                -((y - SIZE * 0.62) / (SIZE * 0.22)) ** 2
-            )
-            dx = (x - center) / SIZE
-            dy = (y - SIZE * 0.58) / SIZE
-            glow = math.exp(-(dx * dx * 18 + dy * dy * 28))
-            well = math.exp(-((y - SIZE * 0.72) / (SIZE * 0.08)) ** 2) * (
-                0.25 + 0.75 * math.exp(-((x - center) / (SIZE * 0.12)) ** 2)
-            )
-            red = int(min(255, 14 + barrier * 70 + glow * tint[0] + well * 40))
-            green = int(min(255, 14 + barrier * 80 + glow * tint[1] + well * 36))
-            blue = int(min(255, 18 + barrier * 120 + glow * tint[2] + well * 70))
-            pixels[x, y] = (red, green, blue)
+    yy, xx = np.mgrid[0:SIZE, 0:SIZE]
+    cx = SIZE * (0.28 if side == "donor" else 0.72)
+    cy = SIZE * 0.50
+    sigma = SIZE * 0.22
+    glow = np.exp(-((xx - cx) ** 2 + (yy - cy) ** 2) / (2.0 * sigma * sigma))
+    # White at the core, violet in the soft shoulder, black outside.
+    red = glow * (255.0 * glow + 196.0 * (1.0 - glow))
+    green = glow * (246.0 * glow + 150.0 * (1.0 - glow))
+    blue = glow * (255.0 * glow + 255.0 * (1.0 - glow))
+    rgb = np.clip(np.stack([red, green, blue], axis=-1), 0, 255).astype(np.uint8)
     path.parent.mkdir(parents=True, exist_ok=True)
-    image.save(path, format="PNG")
+    Image.fromarray(rgb, mode="RGB").save(path, format="PNG")
 
 
 def write_inputs() -> tuple[Path, Path]:
@@ -79,68 +72,148 @@ def _download(url: str, path: Path) -> None:
     response = requests.get(url, timeout=120)
     if response.status_code != 200 or not response.content:
         raise MothError(f"Frame download failed with HTTP {response.status_code}.")
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(response.content)
 
 
-def _run_strength(client: MothClient, image1: str, image2: str, strength: float) -> tuple[str, dict]:
-    params = {
+def _params(strength: float) -> dict:
+    return {
         "strength": strength,
         "size": SIZE,
-        "downscale": True,
+        "downscale": False,
         "direction": "full",
     }
+
+
+def both_shapes_score(image: np.ndarray) -> float:
+    """Higher when both halves carry a bright shape, and neither half dominates."""
+
+    gray = np.asarray(image, dtype=np.float64).mean(axis=2)
+    width = gray.shape[1]
+    left = gray[:, : width // 2]
+    right = gray[:, width // 2 :]
+    left_mass = float(left[left > 28].sum())
+    right_mass = float(right[right > 28].sum())
+    if left_mass <= 0.0 or right_mass <= 0.0:
+        return 0.0
+    balance = min(left_mass, right_mass) / max(left_mass, right_mass)
+    return balance * min(left_mass, right_mass)
+
+
+def _submit_strength(client: MothClient, image1: str, image2: str, strength: float) -> str:
+    params = _params(strength)
     files = {"image1": image1, "image2": image2}
-    job_id = ""
-    for attempt in range(4):
-        if not job_id:
-            job_id = client.submit(ENGINE, params, input_files=files)
-            print(f"submitted strength={strength:.1f} job={job_id}")
-        status = client.wait(job_id, timeout_s=900)
-        if status.get("status") == "completed":
-            return job_id, params
-        error = status.get("error") if isinstance(status.get("error"), dict) else {}
-        print(f"strength={strength:.1f} job={job_id} ended {status.get('status')}: {error}")
-        if not error.get("retryable") or attempt == 3:
-            raise MothError(f"{job_id} ended {status.get('status')}: {error}")
-        job_id = ""
-    raise MothError(f"strength {strength} did not complete.")
+    job_id = client.submit(ENGINE, params, input_files=files)
+    print(f"submitted strength={strength:.2f} job={job_id} downscale=false size={SIZE}", flush=True)
+    return job_id
 
 
-def write_frames() -> Path:
-    """Upload the two PNGs and save one frame per strength in ``atlas_outputs``."""
+def _collect(
+    client: MothClient,
+    pending: dict[str, float],
+    image1: str,
+    image2: str,
+) -> list[tuple[float, str, dict]]:
+    """Poll until every job completes. Retry a retryable failure once."""
+
+    finished: list[tuple[float, str, dict]] = []
+    retries: dict[str, int] = {job_id: 0 for job_id in pending}
+    deadline = time.monotonic() + 900.0
+    while pending:
+        if time.monotonic() > deadline:
+            raise MothError(f"Still waiting on {sorted(pending)}.")
+        for job_id in list(pending):
+            status = client.status(job_id)
+            state = str(status.get("status", ""))
+            if state not in {"completed", "failed", "cancelled"}:
+                continue
+            strength = pending.pop(job_id)
+            if state == "completed":
+                payload = client.result(job_id)
+                finished.append((strength, job_id, payload))
+                print(f"completed strength={strength:.2f} job={job_id}", flush=True)
+                continue
+            error = status.get("error") if isinstance(status.get("error"), dict) else {}
+            print(f"strength={strength:.2f} job={job_id} ended {state}: {error}", flush=True)
+            if error.get("retryable") and retries.get(job_id, 0) < 2:
+                replacement = _submit_strength(client, image1, image2, strength)
+                pending[replacement] = strength
+                retries[replacement] = retries.get(job_id, 0) + 1
+                deadline = max(deadline, time.monotonic() + 900.0)
+                continue
+            raise MothError(f"{job_id} ended {state}: {error}")
+        if pending:
+            time.sleep(2.0)
+    return finished
+
+
+def write_best() -> Path:
+    """Upload the blobs, try several strengths, and keep the clearest both-shape frame."""
 
     donor, acceptor = write_inputs()
     client = MothClient()
     image1 = client.upload_asset(donor, "image/png")
     image2 = client.upload_asset(acceptor, "image/png")
-    print(f"uploaded image1={image1}")
-    print(f"uploaded image2={image2}")
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    for index, strength in enumerate(STRENGTHS):
-        job_id, params = _run_strength(client, image1, image2, strength)
-        payload = client.result(job_id)
+    print(f"uploaded image1={image1}", flush=True)
+    print(f"uploaded image2={image2}", flush=True)
+    pending = {
+        _submit_strength(client, image1, image2, strength): strength for strength in STRENGTHS
+    }
+    finished = _collect(client, pending, image1, image2)
+    RUN_DIR.mkdir(parents=True, exist_ok=True)
+    ranked: list[tuple[float, float, str, Path]] = []
+    for strength, job_id, payload in finished:
         outputs = payload.get("outputs") or []
         if not outputs or not outputs[0].get("url"):
             raise MothError(f"{job_id} returned no download URL.")
-        frame = OUTPUT_DIR / f"frame_{index:02d}.png"
+        frame = RUN_DIR / f"strength_{strength:.2f}.png"
         _download(outputs[0]["url"], frame)
+        image = np.asarray(Image.open(frame).convert("RGB"))
+        score = both_shapes_score(image)
+        ranked.append((score, strength, job_id, frame))
         sidecar = {
             "engine": ENGINE,
             "job_id": job_id,
-            "params": params,
+            "params": _params(strength),
             "input_files": {"image1": "donor.png", "image2": "acceptor.png"},
             "mask": "omitted",
             "strength_note": STRENGTH_NOTE,
+            "both_shapes_score": score,
             "output_slot": outputs[0].get("slot"),
             "content_type": outputs[0].get("content_type"),
         }
-        (OUTPUT_DIR / f"frame_{index:02d}.json").write_text(
-            json.dumps(sidecar, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        print(f"saved {frame.name} job={job_id}")
-    return OUTPUT_DIR
+        frame.with_suffix(".json").write_text(json.dumps(sidecar, indent=2) + "\n", encoding="utf-8")
+        print(f"saved {frame.name} score={score:.1f} job={job_id}", flush=True)
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    best_score, best_strength, best_job, best_frame = ranked[0]
+    chosen = OUTPUT_DIR / "teleblur.png"
+    chosen.write_bytes(best_frame.read_bytes())
+    summary = {
+        "engine": ENGINE,
+        "job_id": best_job,
+        "params": _params(best_strength),
+        "input_files": {"image1": "donor.png", "image2": "acceptor.png"},
+        "mask": "omitted",
+        "strength_note": STRENGTH_NOTE,
+        "both_shapes_score": best_score,
+        "candidates": [
+            {"strength": strength, "job_id": job_id, "both_shapes_score": score}
+            for score, strength, job_id, _path in ranked
+        ],
+    }
+    (OUTPUT_DIR / "teleblur.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    print(
+        f"chose strength={best_strength:.2f} score={best_score:.1f} job={best_job} -> {chosen}",
+        flush=True,
+    )
+    return chosen
+
+
+def write_frames() -> Path:
+    """Notebook entry point. Keeps the clearest both-shape Teleblur frame."""
+
+    return write_best()
 
 
 if __name__ == "__main__":
-    print(f"wrote {write_frames()}")
+    print(f"wrote {write_best()}", flush=True)

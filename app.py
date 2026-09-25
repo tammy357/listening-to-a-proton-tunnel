@@ -40,14 +40,16 @@ N_PERIODS = 1.0
 N_STEPS = 200
 BASIS_GATES = ["rz", "sx", "x", "cx"]
 
-INK = "#f3eee6"
-MUTED = "#a39888"
-AMBER = "#e4a23a"
-TEAL = "#3cbaa6"
-CORAL = "#e07a5f"
-LINE = "#3a342c"
-PANEL = "#191714"
-PAPER = "#12110f"
+INK = "#eceae4"
+MUTED = "#8d8b84"
+ACCENT = "#2b35c8"
+PLOT = "#eceae4"
+PLOT_ALT = "#9aa2ff"
+BAND = "rgba(43, 53, 200, 0.42)"
+LINE = "#2a2a32"
+PANEL = "#121216"
+PAPER = "#0b0b0d"
+FONT = '"JetBrains Mono", "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace'
 
 MODES = {
     "Tunneling beat": "tunneling_beat",
@@ -60,7 +62,7 @@ def main() -> None:
         page_title="Listening to Quantum Tunneling",
         page_icon="⚡",
         layout="wide",
-        initial_sidebar_state="auto",
+        initial_sidebar_state="collapsed",
     )
     _inject_css()
     view = st.segmented_control(
@@ -79,23 +81,25 @@ def main() -> None:
 
 def _render_experience() -> None:
     root = Path(__file__).resolve().parent
-    template = root / "src" / "experience.html"
-    data = root / "src" / "experience_data.json"
-    bank = root / "src" / "bank.json"
-    atlas = root / "src" / "atlas_bank.json"
+    components.html(_experience_document(_experience_stamp(root)), height=1100, scrolling=False)
+
+
+def _experience_stamp(root: Path) -> tuple:
+    watched = [
+        root / "src" / "experience.html",
+        root / "src" / "experience_data.json",
+        root / "src" / "bank.json",
+        root / "src" / "atlas_bank.json",
+        root / "atlas_inputs" / "donor.png",
+        root / "atlas_inputs" / "acceptor.png",
+        root / "atlas_outputs" / "teleblur.png",
+    ]
+    stamp = [path.stat().st_mtime_ns if path.exists() else 0 for path in watched]
     intro = root / "atlas_outputs"
-    intro_stamp = 0
     if intro.exists():
         for frame in intro.glob("frame_*.png"):
-            intro_stamp = max(intro_stamp, frame.stat().st_mtime_ns)
-    stamp = (
-        template.stat().st_mtime_ns,
-        data.stat().st_mtime_ns if data.exists() else 0,
-        bank.stat().st_mtime_ns if bank.exists() else 0,
-        atlas.stat().st_mtime_ns if atlas.exists() else 0,
-        intro_stamp,
-    )
-    components.html(_experience_document(stamp), height=1100, scrolling=False)
+            stamp.append(frame.stat().st_mtime_ns)
+    return tuple(stamp)
 
 
 @st.cache_data(show_spinner=False)
@@ -132,72 +136,115 @@ def _experience_document(stamp: tuple) -> str:
     return document
 
 
-def _intro_frames_json(folder: Path) -> str:
-    """Base64 data URLs for Teleblur frames, or JSON null when none exist."""
+def _data_url(path: Path) -> str:
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
 
+
+def _intro_frames_json(folder: Path) -> str:
+    """Three-panel intro when the contrast Teleblur run exists, else a frame list."""
+
+    root = folder.parent
+    donor = root / "atlas_inputs" / "donor.png"
+    acceptor = root / "atlas_inputs" / "acceptor.png"
+    teleblur = folder / "teleblur.png"
+    if donor.exists() and acceptor.exists() and teleblur.exists():
+        return json.dumps(
+            {
+                "donor": _data_url(donor),
+                "teleblur": _data_url(teleblur),
+                "acceptor": _data_url(acceptor),
+            }
+        )
     if not folder.exists():
         return "null"
     frames = sorted(folder.glob("frame_*.png"))
     if not frames:
         return "null"
-    urls = []
-    for path in frames:
-        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
-        urls.append(f"data:image/png;base64,{encoded}")
-    return json.dumps(urls)
+    return json.dumps([_data_url(path) for path in frames])
+
+
+def _chart(figure: go.Figure) -> None:
+    st.plotly_chart(
+        figure,
+        width="stretch",
+        config={"displaylogo": False, "modeBarButtonsToRemove": ["lasso2d", "select2d"]},
+    )
+
+
+def _section(number: str, title: str) -> None:
+    st.markdown(
+        f"<h2 class='story'><span>{html.escape(number)}</span> {html.escape(title)}</h2>",
+        unsafe_allow_html=True,
+    )
+
+
+def _pipeline() -> None:
+    st.markdown(
+        """
+        <div class="pipeline">
+          <div class="pipe">
+            <span>physics</span><i>→</i><span>QASM</span><i>→</i>
+            <span>Atlas tomography</span><i>→</i><span>Bloch vectors</span><i>→</i>
+            <span>Experience</span>
+          </div>
+          <div class="pipe">
+            <span>donor/acceptor renders</span><i>→</i><span>Teleblur</span><i>→</i><span>intro</span>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _render_lab() -> None:
     controls = _sidebar()
-    _header()
+    root = Path(__file__).resolve().parent
+    components.html(_experience_document(_experience_stamp(root)), height=400, scrolling=False)
 
     try:
-        with st.spinner("Evolving the exact doublet and one period of the split-operator circuit…"):
-            sim = _simulate(
-                controls["barrier_ev"],
-                controls["half_width_a"],
-                controls["asymmetry"],
-                controls["isotope"],
-            )
+        sim = _simulate(
+            controls["barrier_ev"],
+            controls["half_width_a"],
+            controls["asymmetry"],
+            controls["isotope"],
+        )
     except Exception as exc:
         st.error(f"The tunneling evolution failed: {exc}")
-        _atlas_panel()
         return
 
     _metrics(sim)
+    _section("01", "The wall")
     time_index = _time_slider(sim)
-    st.plotly_chart(
-        _potential_figure(sim, time_index),
-        width="stretch",
-        config={"displaylogo": False, "modeBarButtonsToRemove": ["lasso2d", "select2d"]},
-    )
-    st.plotly_chart(
-        _population_figure(sim),
-        width="stretch",
-        config={"displaylogo": False, "modeBarButtonsToRemove": ["lasso2d", "select2d"]},
-    )
+    _chart(_potential_figure(sim, time_index))
+
+    _section("02", "The isotopes")
+    _chart(_population_figure(sim))
     bank_figure, bank_note = _bank_figure()
     if bank_figure is not None:
-        st.plotly_chart(
-            bank_figure,
-            width="stretch",
-            config={"displaylogo": False, "modeBarButtonsToRemove": ["lasso2d", "select2d"]},
-        )
+        _chart(bank_figure)
         st.caption(bank_note)
+
+    _section("03", "Atlas measures it")
+    _pipeline()
     atlas_figure, atlas_note, atlas_jobs = _atlas_figure()
     if atlas_figure is not None:
-        st.plotly_chart(
-            atlas_figure,
-            width="stretch",
-            config={"displaylogo": False, "modeBarButtonsToRemove": ["lasso2d", "select2d"]},
-        )
+        _chart(atlas_figure)
         st.caption(atlas_note)
-        st.code("\n".join(atlas_jobs), language="text")
-    st.plotly_chart(
-        _rate_figure(sim, controls["temperature_k"]),
-        width="stretch",
-        config={"displaylogo": False, "modeBarButtonsToRemove": ["lasso2d", "select2d"]},
+        with st.expander("Job ids", expanded=False):
+            st.code("\n".join(atlas_jobs), language="text")
+    st.caption(
+        "Teleblur strength is the teleportation-effect parameter, from 0 to 1: "
+        "a selector-qubit rotation interpolates the two images at the amplitude level. "
+        "Output alpha is alpha1·(1−strength)+alpha2·strength. "
+        "Strength is not a linear RGB mix. The optional mask slot was not sent."
     )
+
+    _section("04", "Listen")
+    _audio_player(sim, controls)
+
+    _section("05", "Under the hood")
+    _chart(_rate_figure(sim, controls["temperature_k"]))
     st.caption(
         "V(x) = E_b (1 − (x/a)²)² + λx. "
         f"Populations cover one tunneling period in {N_STEPS} steps. "
@@ -208,15 +255,13 @@ def _render_lab() -> None:
         "Depth is one Trotter step after transpiling to rz, sx, x, cx "
         "(optimization level 1)."
     )
-    _audio_player(sim, controls)
     _context_caption()
     _atlas_panel()
 
 
 def _sidebar() -> dict:
-    st.sidebar.markdown("### Double well")
     barrier_ev = st.sidebar.slider(
-        "Barrier E_b (eV)",
+        "Barrier (eV)",
         min_value=0.1,
         max_value=0.5,
         value=DEFAULT_BARRIER_EV,
@@ -224,49 +269,18 @@ def _sidebar() -> dict:
         help="Height of V(x) at x = 0.",
     )
     half_width_a = st.sidebar.slider(
-        "Well half-separation a (Å)",
+        "Well separation a (Å)",
         min_value=0.25,
         max_value=0.50,
         value=DEFAULT_HALF_WIDTH_A,
         step=0.01,
         help="The well minima of the model potential sit at x = ±a.",
     )
-    asymmetry = st.sidebar.slider(
-        "Asymmetry λ (eV)",
-        min_value=0.0,
-        max_value=0.02,
-        value=DEFAULT_ASYMMETRY,
-        step=0.001,
-        help=(
-            "Coefficient of λx, applied as eV per angstrom. "
-            "Larger values detune the two wells and suppress coherent tunneling."
-        ),
-    )
     isotope = st.sidebar.selectbox(
         "Isotope",
         options=["H", "D", "T"],
         index=["H", "D", "T"].index(DEFAULT_ISOTOPE),
         help="Mass presets for the proton, deuteron, and triton. V(x) is unchanged.",
-    )
-    temperature_k = st.sidebar.slider(
-        "Temperature (K)",
-        min_value=100,
-        max_value=400,
-        value=int(DEFAULT_TEMPERATURE_K),
-        step=5,
-        help="Marks a point on the classical Arrhenius curve. k_tunnel is flat in this model.",
-    )
-    st.sidebar.markdown("### Listening")
-    mode_label = st.sidebar.selectbox(
-        "Sonification mode",
-        options=list(MODES),
-        help="Tunneling beat pans two tones with the populations. Measured state plays QPAM reconstructions of |ψ|².",
-    )
-    shots = st.sidebar.select_slider(
-        "Shot count",
-        options=[64, 128, 256, 512, 1024, 2048, 4096, 8192],
-        value=1024,
-        help="Measurements per probability frame in Measured state. Fewer shots make a noisier sound.",
     )
     pitch_hz = st.sidebar.slider(
         "Base pitch (Hz)",
@@ -276,6 +290,37 @@ def _sidebar() -> dict:
         step=1.0,
         help="Carrier of the tunneling beat. 220 Hz is A3.",
     )
+    with st.sidebar.expander("Advanced", expanded=False):
+        asymmetry = st.slider(
+            "Asymmetry λ (eV/Å)",
+            min_value=0.0,
+            max_value=0.02,
+            value=DEFAULT_ASYMMETRY,
+            step=0.001,
+            help=(
+                "Coefficient of λx. "
+                "Larger values detune the two wells and suppress coherent tunneling."
+            ),
+        )
+        temperature_k = st.slider(
+            "Temperature (K)",
+            min_value=100,
+            max_value=400,
+            value=int(DEFAULT_TEMPERATURE_K),
+            step=5,
+            help="Marks a point on the classical Arrhenius curve. k_tunnel is flat in this model.",
+        )
+        mode_label = st.selectbox(
+            "Sonification mode",
+            options=list(MODES),
+            help="Tunneling beat pans two tones with the populations. Measured state plays QPAM reconstructions of |ψ|².",
+        )
+        shots = st.select_slider(
+            "Shot count",
+            options=[64, 128, 256, 512, 1024, 2048, 4096, 8192],
+            value=1024,
+            help="Measurements per probability frame in Measured state. Fewer shots make a noisier sound.",
+        )
     return {
         "barrier_ev": float(barrier_ev),
         "half_width_a": float(half_width_a),
@@ -361,20 +406,6 @@ def _simulate(barrier_ev: float, half_width_a: float, asymmetry: float, isotope:
     }
 
 
-def _header() -> None:
-    st.markdown(
-        """
-        <p class="eyebrow">Moth Hacks 2026 · H / D / T on one double well</p>
-        <h1>Listening to Quantum Tunneling: isotope effects, sonified</h1>
-        <p class="lede">The tunneling doublet of a model double well, compared for
-        hydrogen, deuterium, and tritium. A matrix exponential is the reference.
-        A split-operator circuit runs the same grid. The sound is either a beat
-        mapped from the splitting, or a QPAM measurement of the probability.</p>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
 def _metrics(sim: dict) -> None:
     cards = [
         ("ΔE", _format_mev(sim["splitting_ev"]), "E1 − E0"),
@@ -415,7 +446,7 @@ def _potential_figure(sim: dict, time_index: int) -> go.Figure:
             x=sim["x_angstrom"],
             y=sim["v_ev"],
             name="V(x)",
-            line={"color": MUTED, "width": 2},
+            line={"color": PLOT, "width": 2},
             hovertemplate="x = %{x:.3f} Å<br>V = %{y:.3f} eV<extra></extra>",
         )
     )
@@ -426,9 +457,9 @@ def _potential_figure(sim: dict, time_index: int) -> go.Figure:
             x=sim["x_angstrom"],
             y=density,
             name=f"|ψ|² at {clock:.2f} T_tun",
-            line={"color": TEAL, "width": 2.4},
+            line={"color": PLOT_ALT, "width": 2.4},
             fill="tozeroy",
-            fillcolor="rgba(60, 186, 166, 0.18)",
+            fillcolor="rgba(43, 53, 200, 0.28)",
             yaxis="y2",
             hovertemplate="x = %{x:.3f} Å<br>|ψ|² = %{y:.3f} Å⁻¹<extra></extra>",
         )
@@ -449,10 +480,10 @@ def _population_figure(sim: dict) -> go.Figure:
     figure = go.Figure()
     clock = sim["times_in_periods"]
     series = (
-        ("Donor, exact", sim["donor_exact"], AMBER, "solid"),
-        ("Donor, circuit", sim["donor_circuit"], AMBER, "dash"),
-        ("Acceptor, exact", sim["acceptor_exact"], TEAL, "solid"),
-        ("Acceptor, circuit", sim["acceptor_circuit"], TEAL, "dash"),
+        ("Donor, exact", sim["donor_exact"], PLOT, "solid"),
+        ("Donor, circuit", sim["donor_circuit"], PLOT, "dash"),
+        ("Acceptor, exact", sim["acceptor_exact"], PLOT_ALT, "solid"),
+        ("Acceptor, circuit", sim["acceptor_circuit"], PLOT_ALT, "dash"),
     )
     for name, values, color, dash in series:
         figure.add_trace(
@@ -501,7 +532,7 @@ def _bank_figure() -> tuple[go.Figure | None, str]:
             x=times,
             y=ideal,
             name="Exact acceptor",
-            line={"color": TEAL, "width": 2.4},
+            line={"color": PLOT, "width": 2.4},
             hovertemplate="t = %{x:.3f} T_tun<br>exact = %{y:.3f}<extra></extra>",
         )
     )
@@ -511,8 +542,8 @@ def _bank_figure() -> tuple[go.Figure | None, str]:
             y=measured,
             name=source,
             mode="lines+markers",
-            line={"color": AMBER, "width": 1.6},
-            marker={"size": 7, "color": AMBER},
+            line={"color": PLOT_ALT, "width": 1.6},
+            marker={"size": 7, "color": PLOT_ALT},
             hovertemplate="t = %{x:.3f} T_tun<br>measured = %{y:.3f}<extra></extra>",
         )
     )
@@ -559,7 +590,7 @@ def _atlas_figure() -> tuple[go.Figure | None, str, list[str]]:
             x=times,
             y=ideal,
             name="Exact acceptor",
-            line={"color": TEAL, "width": 2.4},
+            line={"color": PLOT, "width": 2.4},
             hovertemplate="t = %{x:.3f} T_tun<br>exact = %{y:.3f}<extra></extra>",
         )
     )
@@ -567,10 +598,10 @@ def _atlas_figure() -> tuple[go.Figure | None, str, list[str]]:
         go.Scatter(
             x=times,
             y=measured,
-            name="Atlas acceptor",
+            name="two-level model (Atlas)",
             mode="lines+markers",
-            line={"color": AMBER, "width": 1.6},
-            marker={"size": 7, "color": AMBER},
+            line={"color": PLOT_ALT, "width": 1.6},
+            marker={"size": 7, "color": PLOT_ALT},
             hovertemplate="t = %{x:.3f} T_tun<br>Atlas P = %{y:.3f}<extra></extra>",
         )
     )
@@ -583,7 +614,7 @@ def _atlas_figure() -> tuple[go.Figure | None, str, list[str]]:
                 x=np.concatenate([grid, grid[::-1]]),
                 y=np.concatenate([1.0 + half, (1.0 - half)[::-1]]),
                 fill="toself",
-                fillcolor="rgba(224, 122, 95, 0.28)",
+                fillcolor=BAND,
                 line={"width": 0},
                 name="±2σ shot noise",
                 hovertemplate="t = %{x:.3f} T_tun<br>±2σ around |r| = 1<extra></extra>",
@@ -595,8 +626,8 @@ def _atlas_figure() -> tuple[go.Figure | None, str, list[str]]:
             y=length,
             name="Bloch length |r|",
             mode="lines+markers",
-            line={"color": CORAL, "width": 1.6, "dash": "dot"},
-            marker={"size": 6, "color": CORAL},
+            line={"color": PLOT, "width": 1.6, "dash": "dot"},
+            marker={"size": 6, "color": PLOT},
             hovertemplate="t = %{x:.3f} T_tun<br>|r| = %{y:.3f}<extra></extra>",
         )
     )
@@ -614,12 +645,12 @@ def _atlas_figure() -> tuple[go.Figure | None, str, list[str]]:
             f"{provider}/{backend} is the Aer simulator, not a hardware QPU. "
             f"{shots} shots on each of X, Y, and Z. "
             "On a noiseless simulator, deviations from |r| = 1 are sampling noise, not decoherence. "
-            "Acceptor population is (1 − z) / 2 from observables X, Y, Z. Job ids:"
+            "Acceptor population is (1 − z) / 2 from observables X, Y, Z."
         )
     else:
         note = (
             f"{provider}/{backend} · {shots} shots at each of {len(points)} times. "
-            "Acceptor population is (1 − z) / 2 from observables X, Y, Z. Job ids:"
+            "Acceptor population is (1 − z) / 2 from observables X, Y, Z."
         )
     jobs = [str(job_id) for job_id in bank.get("job_ids", [])]
     return figure, note, jobs
@@ -638,7 +669,7 @@ def _rate_figure(sim: dict, temperature_k: float) -> go.Figure:
             x=temperatures,
             y=classical,
             name="k_classical",
-            line={"color": AMBER, "width": 2.4},
+            line={"color": PLOT, "width": 2.4},
             hovertemplate="T = %{x:.0f} K<br>k = %{y:.3e} s⁻¹<extra></extra>",
         )
     )
@@ -647,7 +678,7 @@ def _rate_figure(sim: dict, temperature_k: float) -> go.Figure:
             x=temperatures,
             y=tunnel,
             name="k_tunnel",
-            line={"color": TEAL, "width": 2.4, "dash": "dash"},
+            line={"color": PLOT_ALT, "width": 2.4, "dash": "dash"},
             hovertemplate="T = %{x:.0f} K<br>k_tunnel = %{y:.3e} s⁻¹<extra></extra>",
         )
     )
@@ -657,7 +688,7 @@ def _rate_figure(sim: dict, temperature_k: float) -> go.Figure:
             y=[marked],
             name=f"{temperature_k:.0f} K",
             mode="markers",
-            marker={"color": CORAL, "size": 11},
+            marker={"color": PLOT_ALT, "size": 11},
             hovertemplate="T = %{x:.0f} K<br>k_classical = %{y:.3e} s⁻¹<extra></extra>",
         )
     )
@@ -673,38 +704,52 @@ def _rate_figure(sim: dict, temperature_k: float) -> go.Figure:
 
 
 def _audio_player(sim: dict, controls: dict) -> None:
-    st.markdown(f"### {controls['mode_label']}")
+    st.markdown(f"<p class='listen-mode'>{html.escape(controls['mode_label'])}</p>", unsafe_allow_html=True)
     try:
         if controls["mode"] == "tunneling_beat":
-            clip = tunneling_beat(
+            wav, samples, sample_rate, note = _beat_payload(
                 sim["donor_exact"],
                 sim["acceptor_exact"],
-                sim["splitting_ev"],
-                base_pitch_hz=controls["pitch_hz"],
-                sample_rate=DEFAULT_SAMPLE_RATE,
+                float(sim["splitting_ev"]),
+                float(controls["pitch_hz"]),
             )
         else:
-            with st.spinner("Measuring probability frames with QPAM…"):
-                wav = _measured_wav(sim["density_per_angstrom"], controls["shots"])
-            clip = None
+            wav = _measured_wav(sim["density_per_angstrom"], controls["shots"])
+            samples = None
+            sample_rate = 0
+            note = (
+                f"QPAM encode then decode of probability frames, {controls['shots']} shots each. "
+                "Fewer shots leave a noisier sound."
+            )
     except Exception as exc:
         st.error(f"Sonification failed: {exc}")
         return
 
-    if clip is not None:
-        st.audio(clip.wav_bytes, format="audio/wav")
-        st.caption(clip.note)
+    st.audio(wav, format="audio/wav")
+    st.caption(note)
+    if samples is not None:
         st.plotly_chart(
-            _waveform_figure(clip.samples, clip.sample_rate),
+            _waveform_figure(samples, sample_rate),
             width="stretch",
             config={"displaylogo": False, "displayModeBar": False},
         )
-    else:
-        st.audio(wav, format="audio/wav")
-        st.caption(
-            f"QPAM encode then decode of probability frames, {controls['shots']} shots each. "
-            "Fewer shots leave a noisier sound."
-        )
+
+
+@st.cache_data(show_spinner=False)
+def _beat_payload(
+    donor: np.ndarray,
+    acceptor: np.ndarray,
+    splitting_ev: float,
+    pitch_hz: float,
+) -> tuple[bytes, np.ndarray, int, str]:
+    clip = tunneling_beat(
+        donor,
+        acceptor,
+        splitting_ev,
+        base_pitch_hz=pitch_hz,
+        sample_rate=DEFAULT_SAMPLE_RATE,
+    )
+    return clip.wav_bytes, clip.samples, clip.sample_rate, clip.note
 
 
 @st.cache_data(show_spinner=False)
@@ -720,12 +765,12 @@ def _waveform_figure(samples: np.ndarray, sample_rate: int) -> go.Figure:
     audio = np.asarray(samples)
     if audio.ndim == 1:
         figure.add_trace(
-            go.Scatter(x=times_ms, y=audio[:window_n], name="Mono", line={"color": AMBER, "width": 1.5})
+            go.Scatter(x=times_ms, y=audio[:window_n], name="Mono", line={"color": PLOT, "width": 1.5})
         )
     else:
         figure.add_trace(
             go.Scatter(
-                x=times_ms, y=audio[:window_n, 0], name="Left (donor)", line={"color": AMBER, "width": 1.5}
+                x=times_ms, y=audio[:window_n, 0], name="Left (donor)", line={"color": PLOT, "width": 1.5}
             )
         )
         figure.add_trace(
@@ -733,7 +778,7 @@ def _waveform_figure(samples: np.ndarray, sample_rate: int) -> go.Figure:
                 x=times_ms,
                 y=audio[:window_n, 1],
                 name="Right (acceptor)",
-                line={"color": TEAL, "width": 1.5},
+                line={"color": PLOT_ALT, "width": 1.5},
             )
         )
     figure.update_layout(
@@ -818,7 +863,7 @@ def _layout(top: int) -> dict:
     return {
         "paper_bgcolor": PAPER,
         "plot_bgcolor": PANEL,
-        "font": {"color": INK, "family": "Outfit, Helvetica, sans-serif", "size": 13},
+        "font": {"color": INK, "family": FONT, "size": 12},
         "legend": {
             "orientation": "h",
             "yanchor": "bottom",
@@ -892,66 +937,94 @@ def _inject_css() -> None:
         """
         <link rel="preconnect" href="https://fonts.googleapis.com">
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-        <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,520;9..144,640&family=Outfit:wght@380;520;600&display=swap" rel="stylesheet">
+        <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
         <style>
-          html, body, [class*="css"] { font-family: "Outfit", Helvetica, sans-serif; }
-          .block-container { padding-top: 1.3rem; max-width: 1180px; }
-          h1 {
-            font-family: "Fraunces", Georgia, serif !important;
-            font-weight: 560 !important;
-            letter-spacing: -0.03em;
-            font-size: 2.15rem !important;
-            line-height: 1.15 !important;
-            margin-bottom: 0.35rem;
+          [data-testid="stDecoration"],
+          #MainMenu,
+          [data-testid="stMainMenu"],
+          [data-testid="stToolbarActions"],
+          footer,
+          .stDeployButton,
+          [data-testid="stAppDeployButton"] { display: none !important; }
+          [data-testid="stHeader"],
+          [data-testid="stToolbar"] {
+            background: transparent !important;
+            border: none !important;
+            height: 0 !important;
+            min-height: 0 !important;
+            overflow: visible !important;
           }
-          .eyebrow {
-            color: #e4a23a;
-            letter-spacing: 0.14em;
-            text-transform: uppercase;
-            font-size: 0.74rem;
-            margin: 0 0 0.35rem 0;
+          [data-testid="stExpandSidebarButton"] {
+            position: fixed !important;
+            top: 0.55rem !important;
+            left: 0.55rem !important;
+            z-index: 1000 !important;
           }
-          .lede { color: #c9c0b2; font-size: 1.05rem; max-width: 46rem; margin-bottom: 0.4rem; }
+          html, body, [class*="css"], .stApp, .stMarkdown, p, span, label, button, input, textarea {
+            font-family: "JetBrains Mono", "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace !important;
+          }
+          .stApp { background: #0b0b0d; color: #eceae4; }
+          .block-container { padding-top: 1.1rem; max-width: 1180px; }
+          h2, h3, p, li, label { color: #eceae4; }
+          .story {
+            font-weight: 500;
+            font-size: 1.2rem;
+            letter-spacing: -0.02em;
+            margin: 3.4rem 0 1.1rem;
+            color: #eceae4;
+          }
+          .story span { color: #9aa2ff; margin-right: 0.55rem; }
+          .listen-mode { margin: 0 0 0.6rem; color: #9aa2ff; font-size: 0.85rem; }
+          .pipeline { display: flex; flex-direction: column; gap: 0.7rem; margin: 0.2rem 0 1.3rem; }
+          .pipe { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; }
+          .pipe span {
+            border: 1px solid #2b35c8;
+            background: #12142a;
+            color: #eceae4;
+            border-radius: 999px;
+            padding: 0.38rem 0.7rem;
+            font-size: 0.78rem;
+          }
+          .pipe i { color: #9aa2ff; font-style: normal; }
           .metric-grid {
             display: grid;
             grid-template-columns: repeat(5, minmax(0, 1fr));
             gap: 0.7rem;
-            margin: 0.8rem 0 1rem;
+            margin: 0.9rem 0 0.4rem;
           }
           .metric-card {
-            background: #1c1a16;
-            border: 1px solid #3a342c;
+            background: #121216;
+            border: 1px solid #2b35c8;
             border-radius: 14px;
             padding: 0.8rem 0.95rem 0.85rem;
           }
           .metric-card span {
             display: block;
-            color: #a39888;
-            font-size: 0.72rem;
-            letter-spacing: 0.08em;
+            color: #9aa2ff;
+            font-size: 0.68rem;
+            letter-spacing: 0.06em;
             text-transform: uppercase;
           }
           .metric-card strong {
             display: block;
-            font-family: "Fraunces", Georgia, serif;
-            font-size: 1.35rem;
-            font-weight: 560;
-            margin-top: 0.18rem;
-            color: #f3eee6;
+            font-size: 1.15rem;
+            font-weight: 500;
+            margin-top: 0.28rem;
+            color: #eceae4;
           }
           .metric-card em {
             display: block;
-            color: #a39888;
+            color: #8d8b84;
             font-style: normal;
-            font-size: 0.78rem;
-            margin-top: 0.15rem;
+            font-size: 0.72rem;
+            margin-top: 0.2rem;
           }
-          div[data-testid="stAlert"] {
-            border-radius: 14px;
-          }
+          [data-testid="stSidebar"] { background: #0b0b0d; }
+          div[data-testid="stAlert"] { border-radius: 14px; }
+          iframe[title="streamlit_components_v1.html"] { border-radius: 12px; }
           @media (max-width: 900px) {
             .metric-grid { grid-template-columns: 1fr 1fr; }
-            h1 { font-size: 1.65rem !important; }
+            .story { margin-top: 2.4rem; font-size: 1.05rem; }
           }
         </style>
         """,
