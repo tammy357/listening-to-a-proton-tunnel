@@ -21,12 +21,12 @@ python tests/test_physics.py
 
 ## What the page shows
 
-Experience opens first. It plays the exact doublet for H, D, and T at the default well, with one hydrogen period stretched to 1.6 s and the other isotopes slowed by their real period ratios. Tap the landscape to collapse into a well. Lab is the working bench:
+Experience opens first and fills the window. It plays the exact doublet for H, D, and T at the default well, with one hydrogen period stretched to 1.6 s and the other isotopes slowed by their real period ratios. |ψ|² sits on the ground-state energy, under the barrier. Tap the landscape to collapse into a well. The outcome is one shot drawn from `src/bank.json`. Lab is the working bench:
 
 - Barrier E_b from 0.1 to 0.5 eV, well half-separation a from 0.25 to 0.5 Å, and an asymmetry λ from 0 to 0.02 eV/Å. Larger λ detunes the wells and suppresses coherent tunneling.
 - Isotope H, D, or T. Temperature from 100 to 400 K is only a marker on the rate sketch.
 - ΔE, the tunneling period, the H/D splitting ratio, the split-operator fidelity against the exact state, and the depth of one Trotter step.
-- V(x) with |ψ|² at a chosen time, donor and acceptor populations for the circuit and the exact propagator, and a log-scale sketch of k_classical(T) against a flat k_tunnel. That sketch is a qualitative illustration, not an enzyme rate.
+- V(x) with |ψ|² at a chosen time, donor and acceptor populations for the circuit and the exact propagator, the measurement bank's acceptor counts against the exact curve, and a log-scale sketch of k_classical(T) against a flat k_tunnel. That sketch is a qualitative illustration, not an enzyme rate. The bank plotted in Lab is the local simulator at the default hydrogen well.
 - Tunneling beat: two tones whose separation follows log10(ΔE), panned by the donor and acceptor populations. This is an artistic mapping.
 - Measured state: QPAM encode and decode of |ψ|² frames. The shot count is the measurement budget. Fewer shots sound noisier.
 - Atlas stays on "Atlas: not connected" until `src/atlas_client.py` is filled in from the platform docs. Set `ATLAS_API_KEY` in the environment. Do not put the key in source.
@@ -44,6 +44,9 @@ PDB 1HED, when the download succeeds, is illustrative active-site context. The z
 | `src/moth_sonification.py` | Tunneling beat and QPAM measured-state audio |
 | `src/export_frames.py` | Precomputed H/D/T movie for the Experience view |
 | `src/experience.html` | Canvas and Web Audio player for that movie |
+| `src/measurement_bank.py` | 24 one-qubit prepares; local sampler and Atlas stub |
+| `src/bank.json` | Shot record from the local simulator |
 | `src/atlas_client.py` | Stub Atlas client |
 | `src/pdb_parser.py` | Optional RCSB fetch for 1HED |
 | `tests/test_physics.py` | Norm, population transfer, isotope gap, circuit fidelity |
+| `tests/test_measurement_bank.py` | Local sampler label and the saved shot record |

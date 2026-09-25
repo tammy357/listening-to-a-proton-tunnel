@@ -70,6 +70,7 @@ def build_payload() -> dict:
             "screen_period_s": movie["screen_period_s"],
             "period_ratio_to_h": movie["period_ratio_to_h"],
             "deltaE_meV": movie["deltaE_meV"],
+            "e0_ev": movie["e0_ev"],
             "f0_hz": PITCH_HZ,
             "f_beat_hz": movie["f_beat_hz"],
             "donor": movie["donor"],
@@ -126,6 +127,7 @@ def _isotope_movie(isotope: str) -> dict:
         "isotope": isotope,
         "period_s": float(evolution.tunneling_period_s),
         "deltaE_meV": round(float(evolution.splitting_ev) * 1e3, 4),
+        "e0_ev": round(float(evolution.energies_j[0]) / JOULE_PER_EV, 6),
         "f_beat_hz": round(beat_frequency_hz(float(evolution.splitting_ev)), 4),
         "donor": [float(f"{value:.4f}") for value in evolution.donor_population[:-1]],
         "acceptor": [float(f"{value:.4f}") for value in evolution.acceptor_population[:-1]],
@@ -152,6 +154,7 @@ def _summarize(payload: dict, path: Path) -> None:
         frames = len(movie["density"])
         print(
             f"{name}: ΔE={movie['deltaE_meV']:.3f} meV, "
+            f"E0={movie['e0_ev']:.4f} eV, "
             f"T={movie['period_fs']:.2f} fs, "
             f"screen={movie['screen_period_s']:.3f} s, "
             f"ratio={movie['period_ratio_to_h']:.3f}, "

@@ -13,6 +13,7 @@
     font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   }
   #app {
+    position: relative;
     height: 100%;
     display: flex;
     flex-direction: column;
@@ -64,23 +65,65 @@
     touch-action: none;
     cursor: crosshair;
   }
+  #caption, #collapse-note, footer, #isotope-note {
+    pointer-events: none;
+  }
   #caption {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 34px;
     margin: 0;
-    padding: 2px 14px 0;
+    padding: 0 14px;
     text-align: center;
     font-size: 12px;
     color: #c9c6e2;
     opacity: 0;
     animation: rise 1.8s ease 0.5s forwards;
   }
-  footer {
+  #collapse-note {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 18px;
     margin: 0;
-    padding: 3px 14px 8px;
+    min-height: 1.1em;
+    text-align: center;
+    font-size: 11px;
+    color: #b7b3d4;
+  }
+  #isotope-note {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 22%;
+    margin: 0;
+    text-align: center;
+    font-size: 14px;
+    letter-spacing: 0.02em;
+    color: #f4f2ff;
+    opacity: 0;
+  }
+  #isotope-note.show {
+    animation: isotope-note 3s ease forwards;
+  }
+  footer {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 4px;
+    margin: 0;
     text-align: center;
     font-size: 11px;
     color: #8e8aa6;
   }
   @keyframes rise { to { opacity: 1; } }
+  @keyframes isotope-note {
+    0% { opacity: 0; }
+    12% { opacity: 1; }
+    72% { opacity: 1; }
+    100% { opacity: 0; }
+  }
 </style>
 </head>
 <body>
@@ -91,15 +134,20 @@
     <button id="begin" type="button">Begin</button>
   </header>
   <canvas id="view"></canvas>
+  <p id="isotope-note"></p>
   <p id="caption">Tap to observe. Headphones on: listen to the proton pass through the wall.</p>
+  <p id="collapse-note"></p>
   <footer>Time is slowed for human perception. Period ratios between isotopes are physical.</footer>
 </div>
 <script id="experience-data" type="application/json">__EXPERIENCE_DATA__</script>
+<script id="bank-data" type="application/json">__BANK_DATA__</script>
 <script>
 const DATA = JSON.parse(document.getElementById("experience-data").textContent);
+const BANK = JSON.parse(document.getElementById("bank-data").textContent);
 const ISOTOPES = ["H", "D", "T"];
+const NAMES = { H: "hydrogen", D: "deuterium", T: "tritium" };
 const F0 = DATA.isotopes.H.f0_hz;
-const NPART = 150;
+const NPART = 92;
 const TAU = Math.PI * 2;
 
 const canvas = document.getElementById("view");
@@ -115,6 +163,9 @@ let mix = 1;
 let flash = 0;
 let audio = null;
 const trails = Array.from({ length: NPART }, () => []);
+let particleQ = [];
+let particleU = [];
+reshuffleParticles();
 
 const glow = document.createElement("canvas");
 function glowLayer(w, h) {
@@ -156,26 +207,63 @@ canvas.addEventListener("pointerdown", (event) => {
 
 function selectIsotope(name) {
   if (name === active && mix === 1) return;
-  previous = mix < 1 ? active : active;
+  const changed = name !== active;
+  previous = active;
   active = name;
   mix = 0;
   for (const button of orbs.children) {
     button.setAttribute("aria-pressed", button.textContent === name ? "true" : "false");
   }
+  if (changed) showIsotopeNote(name);
   if (audio) retune(audio.ctx.currentTime);
+}
+
+function showIsotopeNote(name) {
+  const movie = DATA.isotopes[name];
+  const note = document.getElementById("isotope-note");
+  note.textContent = NAMES[name] + " · " + formatRatio(movie.period_ratio_to_h) + "× slower";
+  note.classList.remove("show");
+  void note.offsetWidth;
+  note.classList.add("show");
+}
+
+function formatRatio(value) {
+  return Number(value).toFixed(3).replace(/\.?0+$/, "");
 }
 
 function measure() {
   mix = 1;
   previous = active;
-  const now = displayed(1);
-  const donorP = Math.min(1, Math.max(0, now.donor));
-  const donorWell = Math.random() < donorP;
+  const movie = DATA.isotopes[active];
+  let wrapped = clocks[active] % movie.screen_period_s;
+  if (wrapped < 0) wrapped += movie.screen_period_s;
+  const frac = movie.screen_period_s > 0 ? wrapped / movie.screen_period_s : 0;
+  const points = BANK.points;
+  const k = ((Math.round(frac * points.length) % points.length) + points.length) % points.length;
+  const counts = points[k].counts;
+  const n0 = Number(counts["0"] || 0);
+  const n1 = Number(counts["1"] || 0);
+  const total = Math.max(1, n0 + n1);
+  const donorCount = mirrored[active] ? n1 : n0;
+  const donorWell = Math.random() * total < donorCount;
   mirrored[active] = !donorWell;
   clocks[active] = 0;
   flash = 1;
-  trails.forEach((trail) => { trail.length = 0; });
+  reshuffleParticles();
+  const note = document.getElementById("collapse-note");
+  note.textContent = "collapse drawn from " + BANK.source;
   if (audio) ringBell();
+}
+
+function reshuffleParticles() {
+  particleQ = [];
+  particleU = [];
+  for (let p = 0; p < NPART; p++) {
+    const jitter = (Math.random() - 0.5) * 0.85;
+    particleQ.push(Math.min(0.995, Math.max(0.005, (p + 0.5 + jitter) / NPART)));
+    particleU.push(0.18 + Math.random() * 0.64);
+  }
+  trails.forEach((trail) => { trail.length = 0; });
 }
 
 function displayed(blend) {
@@ -214,7 +302,7 @@ function sampleMovie(name, time, mirror) {
     donor = acceptor;
     acceptor = swap;
   }
-  return { density, phase, donor, acceptor, movie };
+  return { density, phase, donor, acceptor, movie, e0: movie.e0_ev };
 }
 
 function blendFields(from, to, t) {
@@ -225,11 +313,15 @@ function blendFields(from, to, t) {
     density[i] = from.density[i] * (1 - t) + to.density[i] * t;
     phase[i] = lerpAngle(from.phase[i], to.phase[i], t);
   }
+  const donor = from.donor * (1 - t) + to.donor * t;
+  const acceptor = from.acceptor * (1 - t) + to.acceptor * t;
   return {
     density,
     phase,
-    donor: from.donor * (1 - t) + to.donor * t,
-    acceptor: from.acceptor * (1 - t) + to.acceptor * t,
+    donor,
+    acceptor,
+    pan: Math.max(-1, Math.min(1, acceptor - donor)),
+    e0: from.e0 * (1 - t) + to.e0 * t,
     movie: t < 0.5 ? from.movie : to.movie,
   };
 }
@@ -270,60 +362,104 @@ function tick(now) {
 }
 requestAnimationFrame(tick);
 
-function draw(state) {
+function layoutOf(e0) {
   const w = canvas.width;
   const h = canvas.height;
-  const pad = Math.floor(w * 0.04);
-  const base = h * 0.74;
-  const n = state.density.length;
+  const pad = Math.floor(w * 0.05);
+  const yTop = h * 0.07;
+  const yBottom = h * 0.84;
   const xs = DATA.x;
   const vs = DATA.v;
+  const n = xs.length;
+  let vMin = Infinity;
+  let barrierIndex = 0;
+  let leftWell = 0;
+  let rightWell = n - 1;
+  for (let i = 0; i < n; i++) {
+    if (vs[i] < vMin) vMin = vs[i];
+    if (Math.abs(xs[i]) < Math.abs(xs[barrierIndex])) barrierIndex = i;
+    if (xs[i] < 0 && vs[i] < vs[leftWell]) leftWell = i;
+    if (xs[i] > 0 && vs[i] < vs[rightWell]) rightWell = i;
+  }
+  const vBarrier = vs[barrierIndex];
+  const gap = Math.max(vBarrier - e0, 0.02);
+  const eLo = Math.min(vMin, e0) - 0.045;
+  const eHi = vBarrier + 0.62 * gap;
+  const waveAmp = 0.55 * gap;
+  function yOf(energy) {
+    return yBottom - ((energy - eLo) / (eHi - eLo)) * (yBottom - yTop);
+  }
+  function xOf(index) {
+    return pad + (index / (n - 1)) * (w - 2 * pad);
+  }
+  return {
+    w, h, pad, n, xs, vs, yOf, xOf,
+    base: yOf(e0),
+    barrierY: yOf(vBarrier),
+    waveAmp,
+    leftWell, rightWell, barrierIndex,
+  };
+}
+
+function fadeAlpha(y, h) {
+  const edge = h * 0.12;
+  if (y >= edge) return 0.78;
+  if (y <= 0) return 0;
+  return 0.78 * (y / edge);
+}
+
+function draw(state) {
+  const geom = layoutOf(state.e0);
+  const w = geom.w;
+  const h = geom.h;
+  const n = geom.n;
+  const base = geom.base;
   ctx.globalCompositeOperation = "source-over";
   ctx.shadowBlur = 0;
   ctx.fillStyle = "#0e0e10";
   ctx.fillRect(0, 0, w, h);
-  const wash = ctx.createRadialGradient(w * 0.5, base, h * 0.05, w * 0.5, base, w * 0.55);
-  wash.addColorStop(0, "rgba(31, 42, 138, 0.45)");
+  const wash = ctx.createRadialGradient(w * 0.5, base, h * 0.04, w * 0.5, base, w * 0.55);
+  wash.addColorStop(0, "rgba(31, 42, 138, 0.42)");
   wash.addColorStop(1, "rgba(14, 14, 16, 0)");
   ctx.fillStyle = wash;
   ctx.fillRect(0, 0, w, h);
 
-  let vMin = Infinity;
-  let vTop = 0;
-  for (let i = 0; i < n; i++) {
-    if (Math.abs(xs[i]) <= 1.05) {
-      if (vs[i] < vMin) vMin = vs[i];
-      if (Math.abs(xs[i]) < 0.08) vTop = Math.max(vTop, vs[i]);
-    }
+  const vy = new Float64Array(n);
+  for (let i = 0; i < n; i++) vy[i] = geom.yOf(geom.vs[i]);
+  ctx.lineWidth = Math.max(1.25, h * 0.0035);
+  ctx.lineCap = "round";
+  for (let i = 0; i < n - 1; i++) {
+    const y0 = vy[i];
+    const y1 = vy[i + 1];
+    const alpha = fadeAlpha(Math.min(y0, y1), h);
+    if (alpha <= 0.01 && y0 < 0 && y1 < 0) continue;
+    ctx.strokeStyle = "rgba(176, 184, 236, " + alpha.toFixed(3) + ")";
+    ctx.beginPath();
+    ctx.moveTo(geom.xOf(i), y0);
+    ctx.lineTo(geom.xOf(i + 1), y1);
+    ctx.stroke();
   }
-  const vSpan = Math.max(vTop - vMin, 0.05);
-  ctx.beginPath();
-  ctx.lineWidth = Math.max(1, h * 0.004);
-  ctx.strokeStyle = "rgba(150, 160, 230, 0.7)";
-  for (let i = 0; i < n; i++) {
-    const x = pad + (i / (n - 1)) * (w - 2 * pad);
-    const clipped = Math.min(Math.max(vs[i], vMin), vTop + vSpan * 0.35);
-    const y = base - ((clipped - vMin) / (vSpan * 1.35)) * h * 0.22;
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  }
-  ctx.stroke();
 
   const layer = glowLayer(w, h);
   const g = layer.getContext("2d");
   g.clearRect(0, 0, w, h);
   g.globalCompositeOperation = "lighter";
+  let crestY = base;
+  const waveY = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const energy = state.e0 + (state.density[i] / densityMax) * geom.waveAmp;
+    waveY[i] = geom.yOf(energy);
+    if (waveY[i] < crestY) crestY = waveY[i];
+  }
   for (let i = 0; i < n - 1; i++) {
-    const x0 = pad + (i / (n - 1)) * (w - 2 * pad);
-    const x1 = pad + ((i + 1) / (n - 1)) * (w - 2 * pad);
-    const y0 = base - (state.density[i] / densityMax) * h * 0.46;
-    const y1 = base - (state.density[i + 1] / densityMax) * h * 0.46;
+    const x0 = geom.xOf(i);
+    const x1 = geom.xOf(i + 1);
     const hue = ((state.phase[i] + Math.PI) / TAU) * 360;
     g.fillStyle = "hsla(" + hue.toFixed(1) + ", 82%, 56%, 0.86)";
     g.beginPath();
     g.moveTo(x0, base);
-    g.lineTo(x0, y0);
-    g.lineTo(x1, y1);
+    g.lineTo(x0, waveY[i]);
+    g.lineTo(x1, waveY[i + 1]);
     g.lineTo(x1, base);
     g.fill();
   }
@@ -337,41 +473,102 @@ function draw(state) {
   ctx.drawImage(layer, 0, 0);
   ctx.globalAlpha = 1;
 
+  ctx.save();
+  ctx.setLineDash([7, 8]);
+  ctx.lineWidth = Math.max(1, h * 0.0022);
+  ctx.strokeStyle = "rgba(214, 210, 236, 0.55)";
+  ctx.beginPath();
+  ctx.moveTo(geom.pad, base);
+  ctx.lineTo(w - geom.pad, base);
+  ctx.stroke();
+  ctx.restore();
+
   const cdf = cumulative(state.density);
-  ctx.lineWidth = Math.max(1, h * 0.003);
+  ctx.globalCompositeOperation = "source-over";
+  ctx.lineWidth = Math.max(1, h * 0.0024);
+  ctx.lineCap = "round";
+  let inside = 0;
+  const time = clocks[active];
   for (let p = 0; p < NPART; p++) {
-    const q = (p + 0.5) / NPART;
-    const index = quantile(cdf, q);
-    const x = pad + (index / (n - 1)) * (w - 2 * pad);
-    const y = base - (state.density[index] / densityMax) * h * 0.46
-      - (4 + 10 * Math.sin(clocks[active] * 3 + p)) * (h / 700);
+    const index = quantile(cdf, particleQ[p]);
+    const crest = waveY[index];
+    const span = base - crest;
+    const x = geom.xOf(index) + Math.sin(time * 1.7 + p * 0.62) * Math.min(2.4, w * 0.004);
+    let y;
+    if (span < 3) {
+      y = (crest + base) / 2;
+    } else {
+      const inset = Math.max(1.4, span * 0.14);
+      const room = Math.max(0, span - 2 * inset);
+      y = crest + inset + particleU[p] * room;
+      y += Math.sin(time * 2.35 + p * 1.27) * Math.min(span * 0.07, 3.2);
+      y = Math.min(base - 1.3, Math.max(crest + 1.3, y));
+    }
+    if (y > crest + 0.8 && y < base - 0.8) inside += 1;
     const trail = trails[p];
     trail.push(x, y);
-    if (trail.length > 16) trail.splice(0, trail.length - 16);
+    if (trail.length > 14) trail.splice(0, trail.length - 14);
     const hue = ((state.phase[index] + Math.PI) / TAU) * 360;
-    ctx.strokeStyle = "hsla(" + hue.toFixed(1) + ", 80%, 76%, " + (0.35 + flash * 0.4).toFixed(3) + ")";
-    ctx.beginPath();
-    for (let k = 0; k < trail.length; k += 2) {
-      if (k === 0) ctx.moveTo(trail[k], trail[k + 1]);
-      else ctx.lineTo(trail[k], trail[k + 1]);
+    for (let k = 2; k < trail.length; k += 2) {
+      const fade = (k / trail.length) * (0.45 + flash * 0.25);
+      ctx.strokeStyle = "hsla(" + hue.toFixed(1) + ", 80%, 76%, " + fade.toFixed(3) + ")";
+      ctx.beginPath();
+      ctx.moveTo(trail[k - 2], trail[k - 1]);
+      ctx.lineTo(trail[k], trail[k + 1]);
+      ctx.stroke();
     }
-    ctx.stroke();
-    ctx.fillStyle = "hsla(" + hue.toFixed(1) + ", 90%, 78%, " + (0.8 + flash * 0.2).toFixed(3) + ")";
+    ctx.fillStyle = "hsla(" + hue.toFixed(1) + ", 90%, 78%, " + (0.88 + flash * 0.12).toFixed(3) + ")";
     ctx.beginPath();
-    ctx.arc(x, y, Math.max(1.8, h * 0.0045) * (1 + flash), 0, TAU);
+    ctx.arc(x, y, Math.max(1.7, h * 0.0042) * (1 + flash * 0.35), 0, TAU);
     ctx.fill();
   }
 
-  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = "rgba(214, 210, 236, 0.78)";
+  ctx.font = Math.max(11, Math.floor(h * 0.022)) + "px ui-monospace, Menlo, Consolas, monospace";
+  ctx.fillText("proton energy", geom.pad, base - Math.max(6, h * 0.012));
   ctx.fillStyle = "#c8c4e4";
-  ctx.font = Math.max(12, Math.floor(h * 0.028)) + "px ui-monospace, Menlo, Consolas, monospace";
-  ctx.fillText("donor", pad, base + h * 0.08);
+  ctx.font = Math.max(12, Math.floor(h * 0.026)) + "px ui-monospace, Menlo, Consolas, monospace";
+  const labelY = Math.min(h * 0.9, geom.yOf(geom.vs[geom.leftWell]) + h * 0.035);
+  ctx.fillText("donor", geom.xOf(geom.leftWell) - 18, labelY);
   const acceptorLabel = "acceptor";
-  ctx.fillText(acceptorLabel, w - pad - ctx.measureText(acceptorLabel).width, base + h * 0.08);
+  ctx.fillText(acceptorLabel, geom.xOf(geom.rightWell) - ctx.measureText(acceptorLabel).width + 18, labelY);
+
   const movie = DATA.isotopes[active];
   const readout = active + "   " + movie.period_fs.toFixed(1) + " fs   ΔE " + movie.deltaE_meV.toFixed(2) + " meV   exact";
   ctx.fillStyle = "#eeeafc";
-  ctx.fillText(readout, pad, h * 0.08);
+  ctx.fillText(readout, geom.pad, h * 0.055);
+
+  drawPanMeter(state.pan, w, h, geom.pad);
+  window.__scene = {
+    pan: state.pan,
+    e0Y: base,
+    barrierY: geom.barrierY,
+    crestY: crestY,
+    nParticles: NPART,
+    inside: inside,
+    edgeY: Math.min(vy[0], vy[n - 1]),
+    shoulderY: vy[Math.max(0, geom.barrierIndex - 18)],
+  };
+}
+
+function drawPanMeter(pan, w, h, pad) {
+  const y = h - Math.max(10, h * 0.016);
+  const left = pad;
+  const right = w - pad;
+  ctx.strokeStyle = "rgba(168, 176, 230, 0.38)";
+  ctx.lineWidth = Math.max(1, h * 0.002);
+  ctx.beginPath();
+  ctx.moveTo(left, y);
+  ctx.lineTo(right, y);
+  ctx.stroke();
+  const x = left + ((pan + 1) / 2) * (right - left);
+  ctx.shadowBlur = Math.max(10, h * 0.02);
+  ctx.shadowColor = "rgba(188, 198, 255, 0.95)";
+  ctx.fillStyle = "#e4e8ff";
+  ctx.beginPath();
+  ctx.arc(x, y, Math.max(3.4, h * 0.0065), 0, TAU);
+  ctx.fill();
+  ctx.shadowBlur = 0;
 }
 
 function cumulative(density) {
@@ -482,7 +679,7 @@ function followPan(state) {
   const now = audio.ctx.currentTime;
   if (audio.nextPan && now < audio.nextPan) return;
   audio.nextPan = now + 0.05;
-  const target = Math.max(-1, Math.min(1, state.acceptor - state.donor));
+  const target = state.pan;
   const pan = audio.panner.pan;
   pan.setValueAtTime(pan.value, now);
   pan.setTargetAtTime(target, now, 0.08);

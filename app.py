@@ -8,6 +8,7 @@ not connected until ``AtlasClient`` returns a real payload.
 from __future__ import annotations
 
 import html
+import json
 from pathlib import Path
 
 import numpy as np
@@ -65,10 +66,12 @@ def main() -> None:
         options=["Experience", "Lab"],
         default="Experience",
         key="app_view",
+        label_visibility="collapsed",
     )
     if view == "Lab":
         _render_lab()
     else:
+        _inject_experience_chrome()
         _render_experience()
 
 
@@ -76,11 +79,13 @@ def _render_experience() -> None:
     root = Path(__file__).resolve().parent
     template = root / "src" / "experience.html"
     data = root / "src" / "experience_data.json"
+    bank = root / "src" / "bank.json"
     stamp = (
         template.stat().st_mtime_ns,
         data.stat().st_mtime_ns if data.exists() else 0,
+        bank.stat().st_mtime_ns if bank.exists() else 0,
     )
-    components.html(_experience_document(stamp), height=720, scrolling=False)
+    components.html(_experience_document(stamp), height=1100, scrolling=False)
 
 
 @st.cache_data(show_spinner=False)
@@ -94,9 +99,16 @@ def _experience_document(stamp: tuple[int, int]) -> str:
 
         write_experience_data(data_path)
     data = data_path.read_text(encoding="utf-8")
-    if "__EXPERIENCE_DATA__" not in template:
-        raise RuntimeError("experience.html is missing the data placeholder.")
-    return template.replace("__EXPERIENCE_DATA__", data, 1)
+    bank_path = root / "src" / "bank.json"
+    if not bank_path.exists():
+        from src.measurement_bank import write_bank
+
+        write_bank(bank_path)
+    bank = bank_path.read_text(encoding="utf-8")
+    if "__EXPERIENCE_DATA__" not in template or "__BANK_DATA__" not in template:
+        raise RuntimeError("experience.html is missing a data placeholder.")
+    document = template.replace("__EXPERIENCE_DATA__", data, 1)
+    return document.replace("__BANK_DATA__", bank, 1)
 
 
 def _render_lab() -> None:
@@ -128,6 +140,14 @@ def _render_lab() -> None:
         width="stretch",
         config={"displaylogo": False, "modeBarButtonsToRemove": ["lasso2d", "select2d"]},
     )
+    bank_figure, bank_note = _bank_figure()
+    if bank_figure is not None:
+        st.plotly_chart(
+            bank_figure,
+            width="stretch",
+            config={"displaylogo": False, "modeBarButtonsToRemove": ["lasso2d", "select2d"]},
+        )
+        st.caption(bank_note)
     st.plotly_chart(
         _rate_figure(sim, controls["temperature_k"]),
         width="stretch",
@@ -410,6 +430,56 @@ def _population_figure(sim: dict) -> go.Figure:
     return figure
 
 
+def _bank_figure() -> tuple[go.Figure | None, str]:
+    path = Path(__file__).resolve().parent / "src" / "bank.json"
+    if not path.exists():
+        return None, ""
+    bank = json.loads(path.read_text(encoding="utf-8"))
+    source = str(bank.get("source", ""))
+    shots = int(bank.get("shots", 0))
+    points = bank.get("points", [])
+    if shots < 1 or not points:
+        return None, ""
+    times = [float(point["t_over_period"]) for point in points]
+    ideal = [float(point["ideal_acceptor"]) for point in points]
+    measured = [float(point["counts"].get("1", 0)) / shots for point in points]
+    figure = go.Figure()
+    figure.add_trace(
+        go.Scatter(
+            x=times,
+            y=ideal,
+            name="Exact acceptor",
+            line={"color": TEAL, "width": 2.4},
+            hovertemplate="t = %{x:.3f} T_tun<br>exact = %{y:.3f}<extra></extra>",
+        )
+    )
+    figure.add_trace(
+        go.Scatter(
+            x=times,
+            y=measured,
+            name=source,
+            mode="lines+markers",
+            line={"color": AMBER, "width": 1.6},
+            marker={"size": 7, "color": AMBER},
+            hovertemplate="t = %{x:.3f} T_tun<br>measured = %{y:.3f}<extra></extra>",
+        )
+    )
+    figure.update_layout(
+        title=f"Measurement bank · acceptor population · {source}",
+        height=420,
+        yaxis={"title": "Acceptor population", "range": [0, 1.02]},
+        xaxis={"title": "t / T_tun"},
+        **_layout(top=60),
+    )
+    _style_axes(figure)
+    note = (
+        f"Hydrogen at the default well (E_b = {bank.get('barrier_ev', 0.15)} eV, "
+        f"a = {bank.get('half_width_a', 0.35)} Å, λ = {bank.get('asymmetry', 0)}). "
+        f"{len(points)} times across one tunneling period, {shots} shots, source: {source}."
+    )
+    return figure, note
+
+
 def _rate_figure(sim: dict, temperature_k: float) -> go.Figure:
     temperatures = np.linspace(100.0, 400.0, 80)
     classical = np.array(
@@ -624,6 +694,35 @@ def _style_axes(figure: go.Figure) -> None:
         gridcolor="rgba(243, 238, 230, 0.08)",
         zerolinecolor="rgba(243, 238, 230, 0.18)",
         linecolor=LINE,
+    )
+
+
+def _inject_experience_chrome() -> None:
+    st.markdown(
+        """
+        <style>
+          [data-testid="stHeader"],
+          [data-testid="stToolbar"],
+          [data-testid="stDecoration"],
+          [data-testid="stSidebar"],
+          [data-testid="stSidebarCollapsedControl"],
+          #MainMenu,
+          footer,
+          .stDeployButton { display: none !important; }
+          .stApp { background: #0e0e10; overflow: hidden; }
+          [data-testid="stMain"] { overflow: hidden; }
+          [data-testid="stMain"] .block-container {
+            max-width: 100% !important;
+            padding: 0.35rem 0.45rem 0 !important;
+          }
+          [data-testid="stMain"] iframe {
+            height: calc(100dvh - 3.15rem) !important;
+            min-height: calc(100dvh - 3.15rem) !important;
+          }
+          div[data-testid="stSegmentedControl"] { margin: 0 0 0.15rem 0.15rem; }
+        </style>
+        """,
+        unsafe_allow_html=True,
     )
 
 
