@@ -60,7 +60,7 @@ def main() -> None:
     _population_metrics(sim)
     st.plotly_chart(
         _figure(sim),
-        use_container_width=True,
+        width="stretch",
         config={"displaylogo": False, "modeBarButtonsToRemove": ["lasso2d", "select2d"]},
     )
     half_width_angstrom = WELL_HALF_WIDTH_M / ANGSTROM_M
@@ -370,7 +370,7 @@ def _audio_section(
         synthesize = st.button(
             "🎵 Synthesize Quantum Audio (QPAM)",
             type="primary",
-            use_container_width=True,
+            width="stretch",
         )
     with column_play:
         if synthesize:
@@ -417,7 +417,7 @@ def _audio_section(
             st.audio(result.wav_bytes, format="audio/wav")
             st.plotly_chart(
                 _waveform_figure(result.waveform, result.sample_rate),
-                use_container_width=True,
+                width="stretch",
                 config={"displaylogo": False, "displayModeBar": False},
             )
 
@@ -436,25 +436,31 @@ def _audio_section(
 
 
 def _waveform_figure(samples: np.ndarray, sample_rate: int) -> go.Figure:
-    stride = max(len(samples) // 1400, 1)
-    taken = np.asarray(samples)[::stride]
-    times_ms = np.arange(taken.size) * stride / sample_rate * 1000.0
+    """Draw the opening cycles so the QPAM frame is visible as a waveform.
+
+    A full 2.8 s clip at the base pitch is several hundred cycles. Plotting
+    every sample aliases into a smear. The first 40 ms keeps a handful of
+    cycles at audio resolution.
+    """
+
+    window = np.asarray(samples)[: int(0.04 * sample_rate)]
+    times_ms = np.arange(window.size) / sample_rate * 1000.0
     figure = go.Figure(
         go.Scatter(
             x=times_ms,
-            y=taken,
+            y=window,
             mode="lines",
-            line={"color": AMBER, "width": 1.4},
-            hovertemplate="t = %{x:.1f} ms<br>amplitude = %{y:.3f}<extra></extra>",
+            line={"color": AMBER, "width": 1.6},
+            hovertemplate="t = %{x:.2f} ms<br>amplitude = %{y:.3f}<extra></extra>",
         )
     )
     figure.update_layout(
-        height=220,
+        height=240,
         paper_bgcolor=PAPER,
         plot_bgcolor=PANEL,
         font={"color": INK, "family": "Outfit, Helvetica, sans-serif", "size": 12},
-        margin={"l": 48, "r": 16, "t": 28, "b": 40},
-        title={"text": "Played waveform", "font": {"size": 14, "color": INK}},
+        margin={"l": 48, "r": 16, "t": 36, "b": 40},
+        title={"text": "Opening 40 ms of the played waveform", "font": {"size": 14, "color": INK}},
         xaxis={"title": "t (ms)", "gridcolor": "rgba(243,238,230,0.08)", "linecolor": LINE},
         yaxis={
             "title": "Amplitude",

@@ -1,4 +1,5 @@
 .venv/
+agent-tools/
 __pycache__/
 *.pyc
 .streamlit/secrets.toml
