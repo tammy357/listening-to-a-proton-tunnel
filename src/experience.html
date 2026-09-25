@@ -153,7 +153,8 @@ const TAU = Math.PI * 2;
 const canvas = document.getElementById("view");
 const ctx = canvas.getContext("2d", { alpha: false });
 const scaleLabel = document.getElementById("scale");
-scaleLabel.textContent = DATA.time_scale_label;
+const timeExponent = Math.round(Math.log10(DATA.time_scale));
+scaleLabel.innerHTML = "time slowed ~10<sup>" + timeExponent + "</sup>×";
 
 const clocks = { H: 0, D: 0, T: 0 };
 const mirrored = { H: false, D: false, T: false };
@@ -161,6 +162,14 @@ let active = "H";
 let previous = "H";
 let mix = 1;
 let flash = 0;
+const E0_OF = {
+  H: DATA.isotopes.H.e0_ev,
+  D: DATA.isotopes.D.e0_ev,
+  T: DATA.isotopes.T.e0_ev,
+};
+let energyFrom = E0_OF.H;
+let energyTo = E0_OF.H;
+let energyMix = 1;
 let audio = null;
 const trails = Array.from({ length: NPART }, () => []);
 let particleQ = [];
@@ -214,8 +223,17 @@ function selectIsotope(name) {
   for (const button of orbs.children) {
     button.setAttribute("aria-pressed", button.textContent === name ? "true" : "false");
   }
-  if (changed) showIsotopeNote(name);
+  if (changed) {
+    energyFrom = currentE0();
+    energyTo = E0_OF[name];
+    energyMix = 0;
+    showIsotopeNote(name);
+  }
   if (audio) retune(audio.ctx.currentTime);
+}
+
+function currentE0() {
+  return energyFrom + (energyTo - energyFrom) * smooth(energyMix);
 }
 
 function showIsotopeNote(name) {
@@ -353,8 +371,10 @@ function tick(now) {
   last = now;
   for (const name of ISOTOPES) clocks[name] += dt;
   if (mix < 1) mix = Math.min(1, mix + dt / 0.65);
+  if (energyMix < 1) energyMix = Math.min(1, energyMix + dt / 1.2);
   if (flash > 0) flash = Math.max(0, flash - dt * 1.8);
   const state = displayed(mix);
+  state.e0 = currentE0();
   draw(state);
   if (audio) followPan(state);
   if (!window.__experienceReady) window.__experienceReady = performance.now();
@@ -382,23 +402,62 @@ function layoutOf(e0) {
     if (xs[i] > 0 && vs[i] < vs[rightWell]) rightWell = i;
   }
   const vBarrier = vs[barrierIndex];
-  const gap = Math.max(vBarrier - e0, 0.02);
-  const eLo = Math.min(vMin, e0) - 0.045;
-  const eHi = vBarrier + 0.62 * gap;
+  const e0Min = Math.min(E0_OF.H, E0_OF.D, E0_OF.T);
+  const e0Max = Math.max(E0_OF.H, E0_OF.D, E0_OF.T);
+  const gap = Math.max(vBarrier - e0Max, 0.02);
+  const eLo = Math.min(vMin, e0Min) - 0.045;
+  const eHi = vBarrier + 0.62 * Math.max(vBarrier - e0Min, gap);
   const waveAmp = 0.55 * gap;
+  const xSpan = xs[n - 1] - xs[0];
   function yOf(energy) {
     return yBottom - ((energy - eLo) / (eHi - eLo)) * (yBottom - yTop);
   }
   function xOf(index) {
     return pad + (index / (n - 1)) * (w - 2 * pad);
   }
+  function xOfX(xAngstrom) {
+    return pad + ((xAngstrom - xs[0]) / xSpan) * (w - 2 * pad);
+  }
   return {
-    w, h, pad, n, xs, vs, yOf, xOf,
+    w, h, pad, n, xs, vs, yOf, xOf, xOfX,
     base: yOf(e0),
     barrierY: yOf(vBarrier),
     waveAmp,
     leftWell, rightWell, barrierIndex,
   };
+}
+
+function innerTurningPoints(e0) {
+  const xs = DATA.x;
+  const vs = DATA.v;
+  let barrier = 0;
+  for (let i = 1; i < xs.length; i++) {
+    if (Math.abs(xs[i]) < Math.abs(xs[barrier])) barrier = i;
+  }
+  let left = null;
+  for (let i = barrier; i > 0; i--) {
+    const above = vs[i] - e0;
+    const below = vs[i - 1] - e0;
+    if (above * below <= 0) {
+      const span = vs[i] - vs[i - 1];
+      const t = Math.abs(span) < 1e-9 ? 0 : (e0 - vs[i - 1]) / span;
+      left = xs[i - 1] + t * (xs[i] - xs[i - 1]);
+      break;
+    }
+  }
+  let right = null;
+  for (let i = barrier; i < xs.length - 1; i++) {
+    const above = vs[i] - e0;
+    const below = vs[i + 1] - e0;
+    if (above * below <= 0) {
+      const span = vs[i + 1] - vs[i];
+      const t = Math.abs(span) < 1e-9 ? 0 : (e0 - vs[i]) / span;
+      right = xs[i] + t * (xs[i + 1] - xs[i]);
+      break;
+    }
+  }
+  if (left === null || right === null || right <= left) return null;
+  return { left, right, width: right - left };
 }
 
 function fadeAlpha(y, h) {
@@ -481,6 +540,9 @@ function draw(state) {
     drawFadedSegment(geom.xOf(i), vy[i], geom.xOf(i + 1), vy[i + 1], h, fadeTop);
   }
 
+  const turns = innerTurningPoints(state.e0);
+  if (turns) drawForbidden(geom, vy, turns);
+
   const layer = glowLayer(w, h);
   const g = layer.getContext("2d");
   g.clearRect(0, 0, w, h);
@@ -496,7 +558,11 @@ function draw(state) {
     const x0 = geom.xOf(i);
     const x1 = geom.xOf(i + 1);
     const hue = ((state.phase[i] + Math.PI) / TAU) * 360;
-    g.fillStyle = "hsla(" + hue.toFixed(1) + ", 82%, 56%, 0.86)";
+    const mid = (geom.xs[i] + geom.xs[i + 1]) * 0.5;
+    const inWall = turns && mid >= turns.left && mid <= turns.right && state.density[i] > 0;
+    g.fillStyle = inWall
+      ? "hsla(" + hue.toFixed(1) + ", 94%, 74%, 1)"
+      : "hsla(" + hue.toFixed(1) + ", 82%, 56%, 0.86)";
     g.beginPath();
     g.moveTo(x0, base);
     g.lineTo(x0, waveY[i]);
@@ -513,6 +579,7 @@ function draw(state) {
   ctx.globalAlpha = 0.4;
   ctx.drawImage(layer, 0, 0);
   ctx.globalAlpha = 1;
+  if (turns) drawTunnelTail(geom, waveY, turns);
 
   ctx.save();
   ctx.setLineDash([7, 8]);
@@ -550,6 +617,7 @@ function draw(state) {
     trail.push(x, y);
     if (trail.length > 14) trail.splice(0, trail.length - 14);
     const hue = ((state.phase[index] + Math.PI) / TAU) * 360;
+    const inWall = turns && geom.xs[index] >= turns.left && geom.xs[index] <= turns.right;
     for (let k = 2; k < trail.length; k += 2) {
       const fade = (k / trail.length) * (0.45 + flash * 0.25);
       ctx.strokeStyle = "hsla(" + hue.toFixed(1) + ", 80%, 76%, " + fade.toFixed(3) + ")";
@@ -558,7 +626,8 @@ function draw(state) {
       ctx.lineTo(trail[k], trail[k + 1]);
       ctx.stroke();
     }
-    ctx.fillStyle = "hsla(" + hue.toFixed(1) + ", 90%, 78%, " + (0.88 + flash * 0.12).toFixed(3) + ")";
+    const speck = inWall ? 0.98 : 0.88;
+    ctx.fillStyle = "hsla(" + hue.toFixed(1) + ", " + (inWall ? 96 : 90) + "%, " + (inWall ? 84 : 78) + "%, " + (speck + flash * 0.12).toFixed(3) + ")";
     ctx.beginPath();
     ctx.arc(x, y, Math.max(1.7, h * 0.0042) * (1 + flash * 0.35), 0, TAU);
     ctx.fill();
@@ -575,21 +644,110 @@ function draw(state) {
   ctx.fillText(acceptorLabel, geom.xOf(geom.rightWell) - ctx.measureText(acceptorLabel).width + 18, labelY);
 
   const movie = DATA.isotopes[active];
-  const readout = active + "   " + movie.period_fs.toFixed(1) + " fs   ΔE " + movie.deltaE_meV.toFixed(2) + " meV   exact";
+  const readout = active + "   " + movie.period_fs.toFixed(1) + " fs   ΔE " + movie.deltaE_meV.toFixed(2) + " meV   exact simulation";
   ctx.fillStyle = "#eeeafc";
   ctx.fillText(readout, geom.pad, h * 0.055);
+  if (turns) {
+    drawWallBracket(geom, turns);
+    drawForbiddenLabel(geom, turns);
+  }
 
   drawPanMeter(state.pan, w, h, geom.pad);
   window.__scene = {
     pan: state.pan,
+    e0: state.e0,
     e0Y: base,
+    energyMix: energyMix,
     barrierY: geom.barrierY,
     crestY: crestY,
     nParticles: NPART,
     inside: inside,
+    wallLeft: turns ? turns.left : null,
+    wallRight: turns ? turns.right : null,
+    wallWidth: turns ? turns.width : null,
     edgeY: Math.min(vy[0], vy[n - 1]),
     shoulderY: vy[Math.max(0, geom.barrierIndex - 18)],
   };
+}
+
+function drawForbidden(geom, vy, turns) {
+  const base = geom.base;
+  ctx.beginPath();
+  ctx.moveTo(geom.xOfX(turns.left), base);
+  let pen = false;
+  for (let i = 0; i < geom.n; i++) {
+    if (geom.xs[i] < turns.left || geom.xs[i] > turns.right) continue;
+    const y = Math.min(vy[i], base);
+    if (!pen) {
+      ctx.lineTo(geom.xOf(i), y);
+      pen = true;
+    } else {
+      ctx.lineTo(geom.xOf(i), y);
+    }
+  }
+  ctx.lineTo(geom.xOfX(turns.right), base);
+  ctx.closePath();
+  ctx.fillStyle = "rgba(176, 190, 255, 0.09)";
+  ctx.fill();
+}
+
+function drawTunnelTail(geom, waveY, turns) {
+  ctx.save();
+  ctx.shadowBlur = Math.max(14, geom.h * 0.028);
+  ctx.shadowColor = "rgba(236, 228, 255, 0.95)";
+  ctx.strokeStyle = "rgba(255, 250, 255, 0.8)";
+  ctx.lineWidth = Math.max(1.4, geom.h * 0.0032);
+  ctx.beginPath();
+  let drawing = false;
+  for (let i = 0; i < geom.n; i++) {
+    if (geom.xs[i] < turns.left || geom.xs[i] > turns.right) {
+      drawing = false;
+      continue;
+    }
+    const x = geom.xOf(i);
+    const y = waveY[i];
+    if (!drawing) {
+      ctx.moveTo(x, y);
+      drawing = true;
+    } else {
+      ctx.lineTo(x, y);
+    }
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawWallBracket(geom, turns) {
+  const y = geom.base;
+  const x0 = geom.xOfX(turns.left);
+  const x1 = geom.xOfX(turns.right);
+  const tick = Math.max(6, geom.h * 0.014);
+  ctx.save();
+  ctx.strokeStyle = "rgba(236, 232, 255, 0.9)";
+  ctx.lineWidth = Math.max(1.15, geom.h * 0.0024);
+  ctx.beginPath();
+  ctx.moveTo(x0, y - tick);
+  ctx.lineTo(x0, y + tick);
+  ctx.moveTo(x0, y);
+  ctx.lineTo(x1, y);
+  ctx.moveTo(x1, y - tick);
+  ctx.lineTo(x1, y + tick);
+  ctx.stroke();
+  ctx.restore();
+  const caption = "wall thickness at this energy: " + turns.width.toFixed(2) + " Å";
+  ctx.fillStyle = "rgba(236, 232, 255, 0.88)";
+  ctx.font = Math.max(11, Math.floor(geom.h * 0.02)) + "px ui-monospace, Menlo, Consolas, monospace";
+  const textW = ctx.measureText(caption).width;
+  ctx.fillText(caption, (x0 + x1) * 0.5 - textW * 0.5, y - tick - Math.max(4, geom.h * 0.008));
+}
+
+function drawForbiddenLabel(geom, turns) {
+  ctx.fillStyle = "rgba(214, 216, 236, 0.78)";
+  ctx.font = Math.max(10, Math.floor(geom.h * 0.018)) + "px ui-monospace, Menlo, Consolas, monospace";
+  const label = "classically forbidden";
+  const midX = geom.xOfX((turns.left + turns.right) * 0.5) - ctx.measureText(label).width * 0.5;
+  const midY = (geom.base + geom.barrierY) * 0.5;
+  ctx.fillText(label, midX, midY);
 }
 
 function drawPanMeter(pan, w, h, pad) {

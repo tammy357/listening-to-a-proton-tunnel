@@ -436,13 +436,20 @@ def _bank_figure() -> tuple[go.Figure | None, str]:
         return None, ""
     bank = json.loads(path.read_text(encoding="utf-8"))
     source = str(bank.get("source", ""))
-    shots = int(bank.get("shots", 0))
     points = bank.get("points", [])
-    if shots < 1 or not points:
+    budgets = [
+        int(point.get("counts", {}).get("0", 0)) + int(point.get("counts", {}).get("1", 0))
+        for point in points
+    ]
+    if not budgets or min(budgets) < 1:
         return None, ""
+    used_shots = budgets[0]
     times = [float(point["t_over_period"]) for point in points]
     ideal = [float(point["ideal_acceptor"]) for point in points]
-    measured = [float(point["counts"].get("1", 0)) / shots for point in points]
+    measured = [
+        float(point["counts"].get("1", 0)) / budget
+        for point, budget in zip(points, budgets)
+    ]
     figure = go.Figure()
     figure.add_trace(
         go.Scatter(
@@ -465,7 +472,7 @@ def _bank_figure() -> tuple[go.Figure | None, str]:
         )
     )
     figure.update_layout(
-        title=f"Measurement bank · acceptor population · {source}",
+        title=f"Measurement bank · acceptor population · {source} · {used_shots} shots",
         height=420,
         yaxis={"title": "Acceptor population", "range": [0, 1.02]},
         xaxis={"title": "t / T_tun"},
@@ -475,7 +482,7 @@ def _bank_figure() -> tuple[go.Figure | None, str]:
     note = (
         f"Hydrogen at the default well (E_b = {bank.get('barrier_ev', 0.15)} eV, "
         f"a = {bank.get('half_width_a', 0.35)} Å, λ = {bank.get('asymmetry', 0)}). "
-        f"{len(points)} times across one tunneling period, {shots} shots, source: {source}."
+        f"{len(points)} times across one tunneling period, {used_shots} shots, source: {source}."
     )
     return figure, note
 

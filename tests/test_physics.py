@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.hamiltonian import JOULE_PER_EV
+from src.hamiltonian import ANGSTROM_M, JOULE_PER_EV
 from src.quantum_sim import (
     evolve_exact,
     evolve_split_operator,
@@ -196,10 +196,64 @@ def report_reference_numbers() -> None:
     )
 
 
+def _inner_wall_width(x_angstrom: np.ndarray, v_ev: np.ndarray, e0_ev: float) -> float:
+    """Distance between the inner classical turning points where V(x) = E0."""
+
+    barrier = int(np.argmin(np.abs(x_angstrom)))
+    left = None
+    right = None
+    for index in range(barrier, 0, -1):
+        v0 = float(v_ev[index])
+        v1 = float(v_ev[index - 1])
+        if (v0 - e0_ev) * (v1 - e0_ev) <= 0.0:
+            span = v0 - v1
+            fraction = 0.0 if abs(span) < 1e-15 else (e0_ev - v1) / span
+            left = float(x_angstrom[index - 1] + fraction * (x_angstrom[index] - x_angstrom[index - 1]))
+            break
+    for index in range(barrier, len(x_angstrom) - 1):
+        v0 = float(v_ev[index])
+        v1 = float(v_ev[index + 1])
+        if (v0 - e0_ev) * (v1 - e0_ev) <= 0.0:
+            span = v1 - v0
+            fraction = 0.0 if abs(span) < 1e-15 else (e0_ev - v0) / span
+            right = float(x_angstrom[index] + fraction * (x_angstrom[index + 1] - x_angstrom[index]))
+            break
+    if left is None or right is None or right <= left:
+        raise AssertionError("Inner turning points were not found.")
+    return right - left
+
+
+def test_ground_energy_and_wall_thickness_follow_mass() -> None:
+    """Heavier isotopes sit lower in the well, so the barrier is thicker at E0."""
+
+    found = {}
+    for mass in ("H", "D", "T"):
+        model, evolution = evolve_exact(
+            barrier_ev=CIRCUIT_BARRIER_EV,
+            asymmetry_ev=0.0,
+            well_half_width_angstrom=HALF_WIDTH_ANGSTROM,
+            mass=mass,
+            n_periods=1.0,
+            n_steps=1,
+            keep_states=False,
+        )
+        e0_ev = float(evolution.energies_j[0] / JOULE_PER_EV)
+        width = _inner_wall_width(
+            model.x_m / ANGSTROM_M,
+            model.v_joule / JOULE_PER_EV,
+            e0_ev,
+        )
+        found[mass] = (e0_ev, width)
+        print(f"E0({mass}) = {e0_ev * 1e3:.3f} meV, width = {width:.2f} Å")
+    assert found["T"][0] < found["D"][0] < found["H"][0]
+    assert found["T"][1] > found["H"][1]
+
+
 if __name__ == "__main__":
     test_norm_is_preserved()
     test_symmetric_population_oscillates()
     test_deuterium_splitting_is_smaller()
     report_reference_numbers()
     test_split_operator_circuit_matches_exact()
+    test_ground_energy_and_wall_thickness_follow_mass()
     print("all physics checks passed")
