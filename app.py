@@ -709,17 +709,31 @@ def _inject_experience_chrome() -> None:
           #MainMenu,
           footer,
           .stDeployButton { display: none !important; }
-          .stApp { background: #0e0e10; overflow: hidden; }
+          .stApp { background: #0e0e10; }
           [data-testid="stMain"] { overflow: hidden; }
-          [data-testid="stMain"] .block-container {
+          [data-testid="stMainBlockContainer"] {
+            height: 100dvh !important;
+            max-height: 100dvh !important;
             max-width: 100% !important;
-            padding: 0.35rem 0.45rem 0 !important;
+            padding: 0.4rem 0.5rem 0.2rem !important;
+            box-sizing: border-box !important;
+            overflow: hidden !important;
           }
-          [data-testid="stMain"] iframe {
-            height: calc(100dvh - 3.15rem) !important;
-            min-height: calc(100dvh - 3.15rem) !important;
+          [data-testid="stMainBlockContainer"] [data-testid="stVerticalBlock"] {
+            height: 100% !important;
+            min-height: 0 !important;
+            gap: 0.3rem !important;
           }
-          div[data-testid="stSegmentedControl"] { margin: 0 0 0.15rem 0.15rem; }
+          [data-testid="stElementContainer"]:has(iframe) {
+            flex: 1 1 auto !important;
+            height: auto !important;
+            min-height: 0 !important;
+          }
+          iframe[data-testid="stIFrame"] {
+            height: 100% !important;
+            min-height: 0 !important;
+          }
+          div[data-testid="stSegmentedControl"] { margin: 0 0 0.1rem 0.15rem; }
         </style>
         """,
         unsafe_allow_html=True,

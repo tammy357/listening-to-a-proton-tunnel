@@ -72,7 +72,7 @@
     position: absolute;
     left: 0;
     right: 0;
-    bottom: 34px;
+    bottom: 52px;
     margin: 0;
     padding: 0 14px;
     text-align: center;
@@ -85,7 +85,7 @@
     position: absolute;
     left: 0;
     right: 0;
-    bottom: 18px;
+    bottom: 36px;
     margin: 0;
     min-height: 1.1em;
     text-align: center;
@@ -111,7 +111,7 @@
     position: absolute;
     left: 0;
     right: 0;
-    bottom: 4px;
+    bottom: 20px;
     margin: 0;
     text-align: center;
     font-size: 11px;
@@ -402,10 +402,58 @@ function layoutOf(e0) {
 }
 
 function fadeAlpha(y, h) {
-  const edge = h * 0.12;
+  const edge = h * 0.16;
   if (y >= edge) return 0.78;
   if (y <= 0) return 0;
   return 0.78 * (y / edge);
+}
+
+function clipY(x0, y0, x1, y1, yMin, yMax) {
+  let t0 = 0;
+  let t1 = 1;
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  function trim(p, q) {
+    if (Math.abs(p) < 1e-9) return q >= 0;
+    const r = q / p;
+    if (p < 0) {
+      if (r > t1) return false;
+      if (r > t0) t0 = r;
+    } else {
+      if (r < t0) return false;
+      if (r < t1) t1 = r;
+    }
+    return true;
+  }
+  if (!trim(-dy, y0 - yMin)) return null;
+  if (!trim(dy, yMax - y0)) return null;
+  if (t1 <= t0) return null;
+  return [x0 + dx * t0, y0 + dy * t0, x0 + dx * t1, y0 + dy * t1];
+}
+
+function drawFadedSegment(x0, y0, x1, y1, h, fadeTop) {
+  const clipped = clipY(x0, y0, x1, y1, 0, h);
+  if (!clipped) return;
+  const ax = clipped[0];
+  const ay = clipped[1];
+  const bx = clipped[2];
+  const by = clipped[3];
+  const steps = 6;
+  for (let s = 0; s < steps; s++) {
+    const t0 = s / steps;
+    const t1 = (s + 1) / steps;
+    const ya = ay + (by - ay) * t0;
+    const yb = ay + (by - ay) * t1;
+    const xa = ax + (bx - ax) * t0;
+    const xb = ax + (bx - ax) * t1;
+    const alpha = fadeAlpha(Math.min(ya, yb), h);
+    if (alpha < 0.02) continue;
+    ctx.strokeStyle = "rgba(176, 184, 236, " + alpha.toFixed(3) + ")";
+    ctx.beginPath();
+    ctx.moveTo(xa, ya);
+    ctx.lineTo(xb, yb);
+    ctx.stroke();
+  }
 }
 
 function draw(state) {
@@ -428,16 +476,9 @@ function draw(state) {
   for (let i = 0; i < n; i++) vy[i] = geom.yOf(geom.vs[i]);
   ctx.lineWidth = Math.max(1.25, h * 0.0035);
   ctx.lineCap = "round";
+  const fadeTop = h * 0.16;
   for (let i = 0; i < n - 1; i++) {
-    const y0 = vy[i];
-    const y1 = vy[i + 1];
-    const alpha = fadeAlpha(Math.min(y0, y1), h);
-    if (alpha <= 0.01 && y0 < 0 && y1 < 0) continue;
-    ctx.strokeStyle = "rgba(176, 184, 236, " + alpha.toFixed(3) + ")";
-    ctx.beginPath();
-    ctx.moveTo(geom.xOf(i), y0);
-    ctx.lineTo(geom.xOf(i + 1), y1);
-    ctx.stroke();
+    drawFadedSegment(geom.xOf(i), vy[i], geom.xOf(i + 1), vy[i + 1], h, fadeTop);
   }
 
   const layer = glowLayer(w, h);
