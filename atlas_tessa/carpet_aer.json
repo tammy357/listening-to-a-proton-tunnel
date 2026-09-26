@@ -1,0 +1,13 @@
+{
+  "engine": "tessa-image-v1",
+  "job_id": "a4e9e559-9c6e-4a7b-ad6a-98b27f13dd3a",
+  "device": "aer",
+  "shots": 4096,
+  "params": {
+    "machine": "aer",
+    "shots": 4096,
+    "distortion": 0
+  },
+  "source": "carpet.png",
+  "device_label": "Aer \u00b7 noiseless simulator"
+}

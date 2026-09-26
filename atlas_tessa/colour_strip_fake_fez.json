@@ -1,0 +1,13 @@
+{
+  "engine": "tessa-image-v1",
+  "job_id": "65ae181e-9cfd-4cac-8773-6b134fc1dcea",
+  "device": "fake_fez",
+  "shots": 4096,
+  "params": {
+    "machine": "fake_fez",
+    "shots": 4096,
+    "distortion": 0
+  },
+  "source": "colour_strip.png",
+  "device_label": "Emulated IBM Fez \u00b7 calibrated noise model on a simulator"
+}

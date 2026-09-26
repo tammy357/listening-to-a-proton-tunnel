@@ -53,6 +53,8 @@ PDB 1HED, when the download succeeds, is illustrative active-site context. The z
 | `src/atlas_teleblur.py` | Uploads donor and acceptor art and calls `telablur-v1` |
 | `src/atlas_music.py` | Thirty-second round trip, `qrc-midi-v1`, optional `blur-midi-v1`, then `retrocausal-echo-v1` |
 | `atlas_music/` | Cached song audio, MIDI, tap maps, and one sidecar JSON per engine job |
+| `src/atlas_tessa.py` | Bloch colour strip and ψ(x, t) carpet through `tessa-image-v1` |
+| `atlas_tessa/` | Cached Tessa images and one sidecar JSON per device |
 | `atlas_inputs/` | `donor.png` and `acceptor.png` |
 | `atlas_outputs/` | Teleblur frames and one sidecar JSON per frame |
 | `src/atlas_client.py` | Older stub. The live client is `moth_client.py` |
