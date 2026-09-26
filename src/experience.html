@@ -120,6 +120,32 @@
     font-size: 11px;
     color: #8e8aa6;
   }
+  #wall {
+    position: absolute;
+    left: 12px;
+    bottom: 12px;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 46%;
+    margin: 0;
+    padding: 3px 10px 3px 3px;
+    border: 1px solid rgba(43, 53, 200, 0.45);
+    border-radius: 999px;
+    background: rgba(14, 14, 16, 0.55);
+    color: #8e8aa6;
+    font: 11px/1.2 "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+    cursor: pointer;
+  }
+  #wall[hidden] { display: none; }
+  #wall img {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    object-fit: cover;
+    display: block;
+  }
   #intro {
     position: absolute;
     inset: 0;
@@ -206,16 +232,48 @@
   <p id="caption">Tap to observe. Headphones on: listen to the proton pass through the wall.</p>
   <p id="collapse-note"></p>
   <footer>Time is slowed for human perception. Period ratios between isotopes are physical.</footer>
+  <button id="wall" type="button" hidden>
+    <img id="wall-cover" alt="">
+    <span id="wall-label">▶ Through the Wall</span>
+  </button>
+  <audio id="wall-audio" preload="none"></audio>
 </div>
 <script id="experience-data" type="application/json">__EXPERIENCE_DATA__</script>
 <script id="bank-data" type="application/json">__BANK_DATA__</script>
 <script id="atlas-data" type="application/json">__ATLAS_BANK__</script>
 <script id="intro-data" type="application/json">__INTRO_FRAMES__</script>
+<script id="wall-audio-data" type="text/plain">__WALL_AUDIO__</script>
+<script id="wall-cover-data" type="text/plain">__WALL_COVER__</script>
 <script>
 const DATA = JSON.parse(document.getElementById("experience-data").textContent);
 const BANK = JSON.parse(document.getElementById("bank-data").textContent);
 const ATLAS = JSON.parse(document.getElementById("atlas-data").textContent);
 const INTRO = JSON.parse(document.getElementById("intro-data").textContent);
+const wallAudio = document.getElementById("wall-audio");
+const wallButton = document.getElementById("wall");
+let wallPausedLive = false;
+
+function wallIsPlaying() {
+  return Boolean(wallAudio && wallAudio.src && !wallAudio.paused && !wallAudio.ended);
+}
+
+function resumeLiveTunneling() {
+  const label = document.getElementById("wall-label");
+  if (label) label.textContent = "▶ Through the Wall";
+  if (wallPausedLive && audio && audio.ctx.state === "suspended") {
+    audio.ctx.resume();
+  }
+  wallPausedLive = false;
+}
+
+function pauseLiveTunneling() {
+  const label = document.getElementById("wall-label");
+  if (label) label.textContent = "❚❚ Through the Wall";
+  if (audio && audio.ctx.state === "running") {
+    wallPausedLive = true;
+    audio.ctx.suspend();
+  }
+}
 let blochSpin = 0.6;
 const ISOTOPES = ["H", "D", "T"];
 const NAMES = { H: "hydrogen", D: "deuterium", T: "tritium" };
@@ -1061,6 +1119,30 @@ function startIntro() {
 }
 startIntro();
 
+(function setupWall() {
+  const source = document.getElementById("wall-audio-data").textContent.trim();
+  const cover = document.getElementById("wall-cover-data").textContent.trim();
+  if (!source.startsWith("data:") || !wallButton || !wallAudio) return;
+  wallAudio.src = source;
+  if (cover) document.getElementById("wall-cover").src = cover;
+  wallButton.hidden = false;
+  wallButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (wallIsPlaying()) {
+      wallAudio.pause();
+      return;
+    }
+    const started = wallAudio.play();
+    if (started && started.catch) started.catch(() => {});
+  });
+  wallAudio.addEventListener("play", pauseLiveTunneling);
+  wallAudio.addEventListener("pause", resumeLiveTunneling);
+  wallAudio.addEventListener("ended", () => {
+    wallAudio.currentTime = 0;
+    resumeLiveTunneling();
+  });
+})();
+
 function beginAudio() {
   if (audio) return;
   const ctx = new AudioContext();
@@ -1120,7 +1202,12 @@ function beginAudio() {
 
   audio = { ctx, master, panner, partials, bellGain, bell2Gain, beat: null };
   retune(ctx.currentTime);
-  ctx.resume();
+  if (wallIsPlaying()) {
+    wallPausedLive = true;
+    ctx.suspend();
+  } else {
+    ctx.resume();
+  }
   const begin = document.getElementById("begin");
   begin.textContent = "Listening";
   begin.disabled = true;

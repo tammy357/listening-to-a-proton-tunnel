@@ -5,4 +5,5 @@ __pycache__/
 .streamlit/secrets.toml
 *.wav
 !atlas_music/*.wav
+!notebooks/media/*.wav
 .pytest_cache/

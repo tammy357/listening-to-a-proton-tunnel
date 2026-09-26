@@ -93,6 +93,9 @@ def _experience_stamp(root: Path) -> tuple:
         root / "atlas_inputs" / "donor.png",
         root / "atlas_inputs" / "acceptor.png",
         root / "atlas_outputs" / "teleblur.png",
+        root / "notebooks" / "media" / "through_the_wall.wav",
+        root / "atlas_tessa" / "carpet_aer.png",
+        root / "atlas_tessa" / "carpet.png",
     ]
     stamp = [path.stat().st_mtime_ns if path.exists() else 0 for path in watched]
     intro = root / "atlas_outputs"
@@ -122,11 +125,19 @@ def _experience_document(stamp: tuple) -> str:
     atlas_path = root / "src" / "atlas_bank.json"
     atlas = atlas_path.read_text(encoding="utf-8") if atlas_path.exists() else "null"
     intro = _intro_frames_json(root / "atlas_outputs")
+    piece = root / "notebooks" / "media" / "through_the_wall.wav"
+    wall_audio = _data_url(piece, "audio/wav") if piece.exists() else ""
+    cover = root / "atlas_tessa" / "carpet_aer.png"
+    if not cover.exists():
+        cover = root / "atlas_tessa" / "carpet.png"
+    wall_cover = _data_url(cover, "image/png") if cover.exists() else ""
     replacements = (
         ("__EXPERIENCE_DATA__", data),
         ("__BANK_DATA__", bank),
         ("__ATLAS_BANK__", atlas),
         ("__INTRO_FRAMES__", intro),
+        ("__WALL_AUDIO__", wall_audio),
+        ("__WALL_COVER__", wall_cover),
     )
     document = template
     for token, value in replacements:
@@ -136,9 +147,9 @@ def _experience_document(stamp: tuple) -> str:
     return document
 
 
-def _data_url(path: Path) -> str:
+def _data_url(path: Path, mime: str = "image/png") -> str:
     encoded = base64.b64encode(path.read_bytes()).decode("ascii")
-    return f"data:image/png;base64,{encoded}"
+    return f"data:{mime};base64,{encoded}"
 
 
 def _intro_frames_json(folder: Path) -> str:
@@ -184,14 +195,41 @@ def _pipeline() -> None:
         """
         <div class="pipeline">
           <div class="pipe">
-            <span>physics</span><i>→</i><span>QASM</span><i>→</i>
-            <span>Atlas tomography</span><i>→</i><span>Bloch vectors</span><i>→</i>
-            <span>Experience</span>
+            <em>measure</em>
+            <span>exact ψ(x,t)</span><i>→</i>
+            <span>1-qubit circuit</span><i>→</i>
+            <span class="engine">Atlas Tomography</span><i>→</i>
+            <span>Bloch vectors</span><i>→</i>
+            <span>tap-to-observe + Bloch sphere</span>
           </div>
           <div class="pipe">
-            <span>donor/acceptor renders</span><i>→</i><span>Teleblur</span><i>→</i><span>intro</span>
+            <em>see</em>
+            <span>donor/acceptor renders</span><i>→</i>
+            <span class="engine">Teleblur</span><i>→</i>
+            <span>intro</span>
+          </div>
+          <div class="pipe">
+            <em></em>
+            <span>quantum carpet</span><i>→</i>
+            <span class="engine">Tessa (Aer, emulated IBM Fez)</span><i>→</i>
+            <span>cover art</span>
+          </div>
+          <div class="pipe">
+            <em>hear</em>
+            <span>tunneling clips</span><i>→</i>
+            <span class="engine">Retrocausal Echo</span>
+          </div>
+          <div class="pipe">
+            <em></em>
+            <span>tunneling rhythm</span><i>→</i>
+            <span class="engine">QRC MIDI</span><i>→</i>
+            <span class="engine">Blur Jazz</span><i>→</i>
+            <span>soft synth</span><i>→</i>
+            <span class="engine">Retrocausal Echo</span><i>→</i>
+            <span>the piece</span>
           </div>
         </div>
+        <p class="pipe-caption">Each engine does one job, and each job follows the physics.</p>
         """,
         unsafe_allow_html=True,
     )
@@ -214,6 +252,15 @@ def _render_lab() -> None:
         return
 
     _metrics(sim)
+    st.markdown(
+        """
+## What's new here
+
+Many data sonifications map numbers to notes one at a time. Here the sound and the pictures come from the physics itself. The rhythm you hear is the tunneling period, so swapping hydrogen for deuterium or tritium slows it down by the real ratios, about 5.3 and 19.3 times. That slowing is the kinetic isotope effect, and in this notebook you can hear it.
+
+The proton is also treated as what it really is at this scale: a qubit. Atlas measures its state at twenty-four moments along the crossing, and those measurements decide where the proton lands when you tap to observe it. This follows the same tomography-then-expectation-values pattern Moth uses in Quantum Graph. And because Tessa treats every colour as a point on the qubit sphere, the proton's measured states can be shown as their own true colours.
+        """
+    )
     _section("01", "The wall")
     time_index = _time_slider(sim)
     _chart(_potential_figure(sim, time_index))
@@ -257,6 +304,35 @@ def _render_lab() -> None:
     )
     _context_caption()
     _atlas_panel()
+
+    _section("06", "Through the Wall")
+    cover = root / "atlas_tessa" / "carpet_aer.png"
+    if not cover.exists():
+        cover = root / "atlas_tessa" / "carpet.png"
+    if cover.exists():
+        st.image(
+            str(cover),
+            width=420,
+            caption="Cover: the proton's crossing, position across and time down, coloured by phase",
+        )
+    piece = root / "notebooks" / "media" / "through_the_wall.wav"
+    if piece.exists():
+        st.audio(piece.read_bytes(), format="audio/wav")
+    st.markdown(
+        """
+## Through the Wall
+### a short piece in three movements and a coda
+
+I. Hydrogen · II. Deuterium · III. Tritium · Coda
+
+Each movement is the same crossing, played by a heavier particle, so each is slower than the last. The rhythm follows the exact tunneling curve, which the Atlas tomography measurements reproduce. In the coda, Moth's quantum reservoir engine (QRC MIDI) continues that rhythm as a melody, and Blur Jazz gently scatters it. The sense of space throughout comes from Retrocausal Echo: a measurement that runs time forwards and then backwards through a chain of qubits decides when each echo returns.
+
+Everything here ran on simulators, and the echo's physics belongs to its qubit chain, not to the proton. What you're hearing is the proton's journey, given a room to sound in.
+        """
+    )
+    st.markdown(
+        "Through the Wall, cover and pipeline by Lily S. Engines by Moth; Retrocausal Echo by Spencer Topel."
+    )
 
 
 def _sidebar() -> dict:
@@ -977,15 +1053,23 @@ def _inject_css() -> None:
           .listen-mode { margin: 0 0 0.6rem; color: #9aa2ff; font-size: 0.85rem; }
           .pipeline { display: flex; flex-direction: column; gap: 0.7rem; margin: 0.2rem 0 1.3rem; }
           .pipe { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; }
+          .pipe em {
+            color: #9aa2ff;
+            font-style: normal;
+            min-width: 4.8rem;
+            font-size: 0.72rem;
+          }
           .pipe span {
             border: 1px solid #2b35c8;
-            background: #12142a;
+            background: #121216;
             color: #eceae4;
             border-radius: 999px;
             padding: 0.38rem 0.7rem;
             font-size: 0.78rem;
           }
+          .pipe span.engine { background: #2b35c8; }
           .pipe i { color: #9aa2ff; font-style: normal; }
+          .pipe-caption { color: #8d8b84; font-size: 0.85rem; margin: 0.15rem 0 0.2rem; }
           .metric-grid {
             display: grid;
             grid-template-columns: repeat(5, minmax(0, 1fr));
