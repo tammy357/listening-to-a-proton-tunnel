@@ -21,7 +21,7 @@ python tests/test_physics.py
 
 ## What the page shows
 
-Experience opens first and fills the window. It plays the exact doublet for H, D, and T at the default well, with one hydrogen period stretched to 1.6 s and the other isotopes slowed by their real period ratios. |ψ|² sits on the ground-state energy, under the barrier. Tap the landscape to collapse into a well. When `src/atlas_bank.json` is present, that draw uses the Atlas acceptor population at the nearest time; otherwise it uses `src/bank.json` and the caption says the Atlas file is missing. Lab is the working bench:
+Experience opens first and fills the window. It plays the exact doublet for H, D, and T at the default well, with one hydrogen period stretched to 1.6 s and the other isotopes slowed by their real period ratios. |ψ|² sits on the ground-state energy, under the barrier. A measurements slider (64, 256, 1024, 4096) re-bins that density each frame and adds a hiss that follows 1/√N. It is a sampling illustration. Tap the landscape to collapse into a well. When `src/atlas_bank.json` is present, that draw uses the Atlas acceptor population at the nearest time; otherwise it uses `src/bank.json` and the caption says the Atlas file is missing. Lab is the working bench:
 
 - Barrier E_b from 0.1 to 0.5 eV, well half-separation a from 0.25 to 0.5 Å, and an asymmetry λ from 0 to 0.02 eV/Å. Larger λ detunes the wells and suppresses coherent tunneling.
 - Isotope H, D, or T. Temperature from 100 to 400 K is only a marker on the rate sketch.
@@ -53,6 +53,7 @@ PDB 1HED, when the download succeeds, is illustrative active-site context. The z
 | `src/atlas_teleblur.py` | Uploads donor and acceptor art and calls `telablur-v1` |
 | `src/atlas_music.py` | Thirty-second round trip, `qrc-midi-v1`, optional `blur-midi-v1`, then `retrocausal-echo-v1` |
 | `atlas_music/` | Cached song audio, MIDI, tap maps, and one sidecar JSON per engine job |
+| `notebooks/media/through_the_wall/` | EP: four tracks, the full piece, cover, and `liner_notes.md` |
 | `src/atlas_tessa.py` | Bloch colour strip and ψ(x, t) carpet through `tessa-image-v1` |
 | `atlas_tessa/` | Cached Tessa images and one sidecar JSON per device |
 | `atlas_inputs/` | `donor.png` and `acceptor.png` |

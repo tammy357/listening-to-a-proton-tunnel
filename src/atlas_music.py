@@ -17,6 +17,7 @@ loaders read that cache and do not call the API.
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import struct
@@ -667,6 +668,203 @@ def _read_vlq(data: bytes, pos: int) -> tuple[int, int]:
         value = (value << 7) | (byte & 0x7F)
         if not byte & 0x80:
             return value, pos
+
+
+EP_DIR = ROOT / "notebooks" / "media" / "through_the_wall"
+FULL_PIECE = ROOT / "notebooks" / "media" / "through_the_wall.wav"
+# A few milliseconds, only on the cut tracks, so a splice in the crossfade does not click.
+_EDGE_FADE_S = 0.01
+
+
+def _period_ratios() -> tuple[float, float, float]:
+    """Hydrogen period in femtoseconds, and the deuterium and tritium ratios to it."""
+
+    physics = json.loads((ROOT / "src" / "experience_data.json").read_text(encoding="utf-8"))
+    hydrogen = float(physics["isotopes"]["H"]["period_fs"])
+    deuterium = float(physics["isotopes"]["D"]["period_fs"])
+    tritium = float(physics["isotopes"]["T"]["period_fs"])
+    return hydrogen, deuterium / hydrogen, tritium / hydrogen
+
+
+def _job_id(name: str) -> str:
+    return str(json.loads((MUSIC_DIR / name).read_text(encoding="utf-8"))["job_id"])
+
+
+def ep_manifest() -> list[dict]:
+    """Track titles, liner notes, and the cached Atlas job ids that shaped them.
+
+    Reads sidecars and the saved periods. It does not call the API.
+    """
+
+    hydrogen_fs, deuterium_times, tritium_times = _period_ratios()
+    echo_id = _job_id("echo_roundtrip.json")
+    qrc_id = _job_id("qrc_continuation.json")
+    blur_id = _job_id("blur_continuation.json")
+    mix_id = _job_id("mix_echo.json")
+    echo_jobs = f"retrocausal-echo-v1 · {echo_id}"
+    coda_jobs = (
+        f"qrc-midi-v1 · {qrc_id} · blur-midi-v1 · {blur_id} · retrocausal-echo-v1 · {mix_id}"
+    )
+    return [
+        {
+            "file": "I-hydrogen.wav",
+            "title": "I. Hydrogen",
+            "note": (
+                "I. Hydrogen: the lightest nucleus, and the fastest crossing, "
+                f"{hydrogen_fs:.0f} femtoseconds from well to well."
+            ),
+            "jobs": echo_jobs,
+        },
+        {
+            "file": "II-deuterium.wav",
+            "title": "II. Deuterium",
+            "note": (
+                "II. Deuterium: twice as heavy, so the crossing takes "
+                f"{deuterium_times:.1f} times as long."
+            ),
+            "jobs": echo_jobs,
+        },
+        {
+            "file": "III-tritium.wav",
+            "title": "III. Tritium",
+            "note": (
+                "III. Tritium: three times as heavy, so the crossing takes "
+                f"{tritium_times:.1f} times as long."
+            ),
+            "jobs": echo_jobs,
+        },
+        {
+            "file": "coda.wav",
+            "title": "Coda",
+            "note": "Coda: the crossings continue as a melody, and an echo gives them a room.",
+            "jobs": coda_jobs,
+        },
+        {
+            "file": "through_the_wall.wav",
+            "title": "Full piece",
+            "note": "The four tracks in order, with one second of quiet between tritium and the coda.",
+            "jobs": f"{echo_jobs} · {coda_jobs}",
+        },
+    ]
+
+
+def liner_notes_markdown(tracks: list[dict] | None = None) -> str:
+    tracks = tracks or ep_manifest()
+    lines = [
+        "# Through the Wall",
+        "",
+        "a short piece in three movements and a coda",
+        "",
+        "Cover: the proton's crossing, position across and time down, coloured by phase.",
+        "",
+        "Through the Wall, cover and pipeline by Lily S. Engines by Moth; Retrocausal Echo by Spencer Topel.",
+        "",
+        "I. Hydrogen · II. Deuterium · III. Tritium · Coda",
+        "",
+    ]
+    for track in tracks:
+        lines.extend(["## " + track["title"], "", track["note"], "", track["jobs"], ""])
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _read_stereo(blob: bytes) -> tuple[np.ndarray, int]:
+    with wave.open(io.BytesIO(blob)) as handle:
+        rate = handle.getframerate()
+        if handle.getnchannels() != 2 or handle.getsampwidth() != 2:
+            raise ValueError("Expected 16-bit stereo WAV.")
+        frames = handle.readframes(handle.getnframes())
+    audio = np.frombuffer(frames, dtype="<i2").reshape(-1, 2).astype(np.float64) / 32768.0
+    return audio, rate
+
+
+def _write_stereo(path: Path, audio: np.ndarray, sample_rate: int) -> None:
+    clipped = np.clip(np.rint(audio * 32767.0), -32768, 32767).astype("<i2")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(2)
+        handle.setsampwidth(2)
+        handle.setframerate(sample_rate)
+        handle.writeframes(clipped.tobytes())
+
+
+def _edge_fade(audio: np.ndarray, fade_in: bool, fade_out: bool, fade: int) -> np.ndarray:
+    out = np.array(audio, dtype=np.float64, copy=True)
+    fade = min(int(fade), max(0, out.shape[0] // 4))
+    if fade <= 0:
+        return out
+    ramp = np.linspace(0.0, 1.0, fade, endpoint=False)
+    if fade_in:
+        out[:fade] *= ramp[:, None]
+    if fade_out:
+        out[-fade:] *= ramp[::-1, None]
+    return out
+
+
+def _movement_spans(n_frames: int, sample_rate: int) -> list[tuple[int, int]]:
+    """Sample ranges of H, D, and T inside the echoed round trip, tail included on T."""
+
+    n_fade = int(round(FADE_SECONDS * sample_rate))
+    n_total = int(round(TRACK_SECONDS * sample_rate))
+    n_seg = (n_total + 2 * n_fade) // 3
+    start_ii = n_seg - n_fade
+    start_iii = 2 * (n_seg - n_fade)
+    if n_frames < n_total:
+        raise ValueError("The echoed round trip is shorter than the thirty-second piece.")
+    return [(0, start_ii), (start_ii, start_iii), (start_iii, n_frames)]
+
+
+def _join_piece_bytes(echo: bytes, coda: bytes) -> bytes:
+    with wave.open(io.BytesIO(echo)) as left:
+        params = left.getparams()
+        left_pcm = left.readframes(left.getnframes())
+        silence = b"\x00" * (left.getframerate() * left.getsampwidth() * left.getnchannels())
+    with wave.open(io.BytesIO(coda)) as right:
+        right_pcm = right.readframes(right.getnframes())
+    out = io.BytesIO()
+    with wave.open(out, "wb") as dest:
+        dest.setparams(params)
+        dest.writeframes(left_pcm + silence + right_pcm)
+    return out.getvalue()
+
+
+def write_ep(destination: Path | None = None) -> list[dict]:
+    """Split the cached echo and coda into four tracks plus the full piece.
+
+    No engine is called. Job ids are copied from the sidecars already on disk.
+    """
+
+    echo_path = MUSIC_DIR / "echo_roundtrip.wav"
+    coda_path = MUSIC_DIR / "mix_echo.wav"
+    echo_bytes = echo_path.read_bytes()
+    coda_bytes = coda_path.read_bytes()
+    movements, sample_rate = _read_stereo(echo_bytes)
+    spans = _movement_spans(movements.shape[0], sample_rate)
+    fade = int(round(_EDGE_FADE_S * sample_rate))
+    pieces = [
+        _edge_fade(movements[spans[0][0] : spans[0][1]], False, True, fade),
+        _edge_fade(movements[spans[1][0] : spans[1][1]], True, True, fade),
+        _edge_fade(movements[spans[2][0] : spans[2][1]], True, False, fade),
+    ]
+    folder = destination or EP_DIR
+    folder.mkdir(parents=True, exist_ok=True)
+    names = ("I-hydrogen.wav", "II-deuterium.wav", "III-tritium.wav")
+    for name, audio in zip(names, pieces):
+        _write_stereo(folder / name, audio, sample_rate)
+    (folder / "coda.wav").write_bytes(coda_bytes)
+    piece = _join_piece_bytes(echo_bytes, coda_bytes)
+    (folder / "through_the_wall.wav").write_bytes(piece)
+    FULL_PIECE.parent.mkdir(parents=True, exist_ok=True)
+    FULL_PIECE.write_bytes(piece)
+    cover = ROOT / "atlas_tessa" / "carpet_aer.png"
+    if not cover.exists():
+        cover = ROOT / "atlas_tessa" / "carpet.png"
+    if cover.exists():
+        (folder / "cover.png").write_bytes(cover.read_bytes())
+    tracks = ep_manifest()
+    (folder / "liner_notes.md").write_text(liner_notes_markdown(tracks), encoding="utf-8")
+    for track in tracks:
+        track["path"] = str(folder / track["file"])
+    return tracks
 
 
 if __name__ == "__main__":

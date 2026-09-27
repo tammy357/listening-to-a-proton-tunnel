@@ -76,7 +76,7 @@
     position: absolute;
     left: 0;
     right: 0;
-    bottom: 52px;
+    bottom: 108px;
     margin: 0;
     padding: 0 14px;
     text-align: center;
@@ -84,6 +84,43 @@
     color: #c9c6e2;
     opacity: 0;
     animation: rise 1.8s ease 0.5s forwards;
+  }
+  #grain {
+    position: absolute;
+    left: 12px;
+    bottom: 54px;
+    z-index: 3;
+    max-width: min(540px, calc(100% - 24px));
+    margin: 0;
+    padding: 6px 8px 5px;
+    border-radius: 12px;
+    background: rgba(14, 14, 16, 0.55);
+  }
+  #grain-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  #grain-name, #grain-readout {
+    color: #eceae4;
+    font-size: 11px;
+  }
+  #grain-readout { min-width: 2.4rem; }
+  #grain-caption {
+    color: #c9c6e2;
+    font-size: 11px;
+    line-height: 1.35;
+  }
+  #grain-kind {
+    margin: 3px 0 0;
+    color: #8e8aa6;
+    font-size: 10px;
+  }
+  #grain input {
+    width: 92px;
+    margin: 0;
+    accent-color: #2b35c8;
   }
   #collapse-note {
     position: absolute;
@@ -233,6 +270,15 @@
   <p id="caption">Tap to observe. Headphones on: listen to the proton pass through the wall.</p>
   <p id="collapse-note"></p>
   <footer>Time is slowed for human perception. Period ratios between isotopes are physical.</footer>
+  <div id="grain">
+    <div id="grain-row">
+      <span id="grain-name">measurements</span>
+      <input id="grain-slider" type="range" min="0" max="3" step="1" value="3" aria-label="Measurements, a sampling illustration">
+      <span id="grain-readout">4096</span>
+      <span id="grain-caption">The grain is how many times the proton was measured.</span>
+    </div>
+    <p id="grain-kind">sampling illustration</p>
+  </div>
   <button id="wall" type="button" hidden>
     <img id="wall-cover" alt="">
     <span id="wall-label">▶ Through the Wall</span>
@@ -279,7 +325,8 @@ let blochSpin = 0.6;
 const ISOTOPES = ["H", "D", "T"];
 const NAMES = { H: "hydrogen", D: "deuterium", T: "tritium" };
 const F0 = DATA.isotopes.H.f0_hz;
-const NPART = 92;
+const MEASUREMENTS = [64, 256, 1024, 4096];
+let measurementCount = 4096;
 const TAU = Math.PI * 2;
 
 const canvas = document.getElementById("view");
@@ -303,10 +350,7 @@ let energyFrom = E0_OF.H;
 let energyTo = E0_OF.H;
 let energyMix = 1;
 let audio = null;
-const trails = Array.from({ length: NPART }, () => []);
-let particleQ = [];
-let particleU = [];
-reshuffleParticles();
+window.__measurements = measurementCount;
 
 const glow = document.createElement("canvas");
 function glowLayer(w, h) {
@@ -433,19 +477,7 @@ function measure() {
   mirrored[active] = !donorWell;
   clocks[active] = 0;
   flash = 1;
-  reshuffleParticles();
   if (audio) ringBell();
-}
-
-function reshuffleParticles() {
-  particleQ = [];
-  particleU = [];
-  for (let p = 0; p < NPART; p++) {
-    const jitter = (Math.random() - 0.5) * 0.85;
-    particleQ.push(Math.min(0.995, Math.max(0.005, (p + 0.5 + jitter) / NPART)));
-    particleU.push(0.18 + Math.random() * 0.64);
-  }
-  trails.forEach((trail) => { trail.length = 0; });
 }
 
 function displayed(blend) {
@@ -726,8 +758,8 @@ function draw(state) {
     const mid = (geom.xs[i] + geom.xs[i + 1]) * 0.5;
     const inWall = turns && mid >= turns.left && mid <= turns.right && state.density[i] > 0;
     g.fillStyle = inWall
-      ? "hsla(" + hue.toFixed(1) + ", 94%, 74%, 1)"
-      : "hsla(" + hue.toFixed(1) + ", 82%, 56%, 0.86)";
+      ? "hsla(" + hue.toFixed(1) + ", 94%, 74%, 0.22)"
+      : "hsla(" + hue.toFixed(1) + ", 82%, 56%, 0.16)";
     g.beginPath();
     g.moveTo(x0, base);
     g.lineTo(x0, waveY[i]);
@@ -736,8 +768,8 @@ function draw(state) {
     g.fill();
   }
   ctx.globalCompositeOperation = "source-over";
-  ctx.shadowBlur = Math.max(18, h * 0.04);
-  ctx.shadowColor = "rgba(150, 130, 255, 0.55)";
+  ctx.shadowBlur = Math.max(10, h * 0.02);
+  ctx.shadowColor = "rgba(150, 130, 255, 0.28)";
   ctx.drawImage(layer, 0, 0);
   ctx.shadowBlur = 0;
   ctx.globalCompositeOperation = "lighter";
@@ -756,46 +788,36 @@ function draw(state) {
   ctx.stroke();
   ctx.restore();
 
-  const cdf = cumulative(state.density);
+  const counts = binMeasurements(state.density, measurementCount);
   ctx.globalCompositeOperation = "source-over";
-  ctx.lineWidth = Math.max(1, h * 0.0024);
-  ctx.lineCap = "round";
   let inside = 0;
-  const time = clocks[active];
-  for (let p = 0; p < NPART; p++) {
-    const index = quantile(cdf, particleQ[p]);
-    const crest = waveY[index];
+  const grain = Math.min(3.4, Math.sqrt(4096 / measurementCount));
+  const speck = Math.max(1.8, h * 0.0042) * grain;
+  for (let i = 0; i < n; i++) {
+    const count = counts[i];
+    if (!count) continue;
+    const crest = waveY[i];
     const span = base - crest;
-    const x = geom.xOf(index) + Math.sin(time * 1.7 + p * 0.62) * Math.min(2.4, w * 0.004);
-    let y;
-    if (span < 3) {
-      y = (crest + base) / 2;
-    } else {
-      const inset = Math.max(1.4, span * 0.14);
-      const room = Math.max(0, span - 2 * inset);
-      y = crest + inset + particleU[p] * room;
-      y += Math.sin(time * 2.35 + p * 1.27) * Math.min(span * 0.07, 3.2);
-      y = Math.min(base - 1.3, Math.max(crest + 1.3, y));
+    const x = geom.xOf(i);
+    const hue = ((state.phase[i] + Math.PI) / TAU) * 360;
+    const inWall = turns && geom.xs[i] >= turns.left && geom.xs[i] <= turns.right;
+    const shown = Math.min(count, measurementCount <= 256 ? count : 8);
+    const bulk = Math.min(2.2, 1 + count / 18);
+    ctx.fillStyle = "hsla(" + hue.toFixed(1) + ", " + (inWall ? 96 : 88) + "%, " + (inWall ? 84 : 76) + "%, " + (0.92 + flash * 0.08).toFixed(3) + ")";
+    for (let k = 0; k < shown; k++) {
+      let y;
+      if (span < 3) {
+        y = (crest + base) / 2;
+      } else {
+        const inset = Math.max(1.2, span * 0.1);
+        const room = Math.max(0, span - 2 * inset);
+        const u = (k + Math.random()) / shown;
+        y = crest + inset + u * room;
+      }
+      if (y > crest + 0.8 && y < base - 0.8) inside += 1;
+      const size = speck * bulk;
+      ctx.fillRect(x - size * 0.5, y, size, size);
     }
-    if (y > crest + 0.8 && y < base - 0.8) inside += 1;
-    const trail = trails[p];
-    trail.push(x, y);
-    if (trail.length > 14) trail.splice(0, trail.length - 14);
-    const hue = ((state.phase[index] + Math.PI) / TAU) * 360;
-    const inWall = turns && geom.xs[index] >= turns.left && geom.xs[index] <= turns.right;
-    for (let k = 2; k < trail.length; k += 2) {
-      const fade = (k / trail.length) * (0.45 + flash * 0.25);
-      ctx.strokeStyle = "hsla(" + hue.toFixed(1) + ", 80%, 76%, " + fade.toFixed(3) + ")";
-      ctx.beginPath();
-      ctx.moveTo(trail[k - 2], trail[k - 1]);
-      ctx.lineTo(trail[k], trail[k + 1]);
-      ctx.stroke();
-    }
-    const speck = inWall ? 0.98 : 0.88;
-    ctx.fillStyle = "hsla(" + hue.toFixed(1) + ", " + (inWall ? 96 : 90) + "%, " + (inWall ? 84 : 78) + "%, " + (speck + flash * 0.12).toFixed(3) + ")";
-    ctx.beginPath();
-    ctx.arc(x, y, Math.max(1.7, h * 0.0042) * (1 + flash * 0.35), 0, TAU);
-    ctx.fill();
   }
 
   ctx.fillStyle = "rgba(214, 210, 236, 0.78)";
@@ -826,7 +848,8 @@ function draw(state) {
     energyMix: energyMix,
     barrierY: geom.barrierY,
     crestY: crestY,
-    nParticles: NPART,
+    nParticles: measurementCount,
+    measurements: measurementCount,
     inside: inside,
     wallLeft: turns ? turns.left : null,
     wallRight: turns ? turns.right : null,
@@ -1064,6 +1087,49 @@ function drawPanMeter(pan, w, h, pad) {
   ctx.shadowBlur = 0;
 }
 
+function binMeasurements(density, samples) {
+  const cdf = cumulative(density);
+  const counts = new Uint16Array(density.length);
+  for (let s = 0; s < samples; s++) {
+    let q = Math.random();
+    if (q <= 0) q = 1e-9;
+    if (q >= 1) q = 1 - 1e-12;
+    counts[quantile(cdf, q)] += 1;
+  }
+  return counts;
+}
+
+function shotNoiseLevel(count) {
+  const quiet = Math.sqrt(1 / 4096);
+  const here = Math.sqrt(1 / count);
+  const loud = Math.sqrt(1 / 64);
+  return 0.22 * (here - quiet) / (loud - quiet);
+}
+
+function applyMeasurement(count) {
+  const index = MEASUREMENTS.indexOf(count);
+  measurementCount = index < 0 ? 4096 : count;
+  const readout = document.getElementById("grain-readout");
+  const slider = document.getElementById("grain-slider");
+  if (readout) readout.textContent = String(measurementCount);
+  if (slider) slider.value = String(index < 0 ? 3 : index);
+  const level = shotNoiseLevel(measurementCount);
+  if (audio && audio.noiseGain) {
+    const gain = audio.noiseGain.gain;
+    gain.setTargetAtTime(level, audio.ctx.currentTime, 0.06);
+  }
+  window.__measurements = measurementCount;
+  window.__shotNoise = level;
+  window.__noiseLive = Boolean(audio && audio.noiseGain);
+}
+
+document.getElementById("grain").addEventListener("pointerdown", (event) => {
+  event.stopPropagation();
+});
+document.getElementById("grain-slider").addEventListener("input", (event) => {
+  applyMeasurement(MEASUREMENTS[Number(event.target.value)]);
+});
+
 function cumulative(density) {
   const cdf = new Float64Array(density.length);
   let sum = 0;
@@ -1138,6 +1204,7 @@ startIntro();
   wallAudio.src = source;
   if (cover) document.getElementById("wall-cover").src = cover;
   wallButton.hidden = false;
+  document.getElementById("grain").style.bottom = "54px";
   wallButton.addEventListener("click", (event) => {
     event.stopPropagation();
     if (wallIsPlaying()) {
@@ -1180,6 +1247,19 @@ function beginAudio() {
   dry.connect(master);
   wet.connect(master);
 
+  const noise = ctx.createBufferSource();
+  noise.buffer = hiss(ctx);
+  noise.loop = true;
+  const noiseFilter = ctx.createBiquadFilter();
+  noiseFilter.type = "lowpass";
+  noiseFilter.frequency.setValueAtTime(1600, ctx.currentTime);
+  const noiseGain = ctx.createGain();
+  noiseGain.gain.setValueAtTime(shotNoiseLevel(measurementCount), ctx.currentTime);
+  noise.connect(noiseFilter);
+  noiseFilter.connect(noiseGain);
+  noiseGain.connect(panner);
+  noise.start();
+
   const partials = [];
   const weights = [0.22, 0.045, 0.02, 0.18, 0.035, 0.015];
   for (let i = 0; i < 6; i++) {
@@ -1212,7 +1292,7 @@ function beginAudio() {
   bell2Gain.connect(master);
   bell2.start();
 
-  audio = { ctx, master, panner, partials, bellGain, bell2Gain, beat: null };
+  audio = { ctx, master, panner, partials, bellGain, bell2Gain, noiseGain, beat: null };
   retune(ctx.currentTime);
   if (wallIsPlaying()) {
     wallPausedLive = true;
@@ -1220,6 +1300,7 @@ function beginAudio() {
   } else {
     ctx.resume();
   }
+  applyMeasurement(measurementCount);
   const begin = document.getElementById("begin");
   begin.textContent = "sound on · pause";
   begin.disabled = false;
@@ -1256,6 +1337,18 @@ function ringBell() {
   audio.bellGain.gain.setTargetAtTime(0.0001, now + 0.08, 0.28);
   audio.bell2Gain.gain.setTargetAtTime(0.03, now + 0.02, 0.01);
   audio.bell2Gain.gain.setTargetAtTime(0.0001, now + 0.06, 0.16);
+}
+
+function hiss(ctx) {
+  const length = Math.floor(ctx.sampleRate * 2);
+  const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  let hold = 0;
+  for (let i = 0; i < length; i++) {
+    hold = hold * 0.92 + (Math.random() * 2 - 1) * 0.08;
+    data[i] = hold;
+  }
+  return buffer;
 }
 
 function decayingNoise(ctx) {

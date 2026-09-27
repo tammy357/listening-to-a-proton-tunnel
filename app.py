@@ -306,18 +306,7 @@ The proton is also treated as what it really is at this scale: a qubit. Atlas me
     _atlas_panel()
 
     _section("06", "Through the Wall")
-    cover = root / "atlas_tessa" / "carpet_aer.png"
-    if not cover.exists():
-        cover = root / "atlas_tessa" / "carpet.png"
-    if cover.exists():
-        st.image(
-            str(cover),
-            width=420,
-            caption="Cover: the proton's crossing, position across and time down, coloured by phase",
-        )
-    piece = root / "notebooks" / "media" / "through_the_wall.wav"
-    if piece.exists():
-        st.audio(piece.read_bytes(), format="audio/wav")
+    _ep_players(root)
     st.markdown(
         """
 ## Through the Wall
@@ -333,6 +322,33 @@ Everything here ran on simulators, and the echo's physics belongs to its qubit c
     st.markdown(
         "Through the Wall, cover and pipeline by Lily S. Engines by Moth; Retrocausal Echo by Spencer Topel."
     )
+
+
+def _ep_players(root: Path) -> None:
+    cover = root / "atlas_tessa" / "carpet_aer.png"
+    if not cover.exists():
+        cover = root / "atlas_tessa" / "carpet.png"
+    if cover.exists():
+        st.image(
+            str(cover),
+            width=420,
+            caption="Cover: the proton's crossing, position across and time down, coloured by phase",
+        )
+    from src.atlas_music import EP_DIR, ep_manifest
+
+    folder = EP_DIR if (EP_DIR / "liner_notes.md").exists() else root / "notebooks" / "media"
+    for track in ep_manifest():
+        path = folder / track["file"]
+        if track["file"] == "through_the_wall.wav" and not path.exists():
+            path = root / "notebooks" / "media" / "through_the_wall.wav"
+        st.markdown(f"**{track['title']}**")
+        if path.exists():
+            st.audio(path.read_bytes(), format="audio/wav")
+        st.markdown(track["note"])
+        st.markdown(
+            f"<p class='ep-jobs'>{html.escape(track['jobs'])}</p>",
+            unsafe_allow_html=True,
+        )
 
 
 def _sidebar() -> dict:
@@ -1070,6 +1086,7 @@ def _inject_css() -> None:
           .pipe span.engine { background: #2b35c8; }
           .pipe i { color: #9aa2ff; font-style: normal; }
           .pipe-caption { color: #8d8b84; font-size: 0.85rem; margin: 0.15rem 0 0.2rem; }
+          .ep-jobs { color: #8d8b84; font-size: 0.75rem; margin: 0.15rem 0 1.1rem; line-height: 1.45; }
           .metric-grid {
             display: grid;
             grid-template-columns: repeat(5, minmax(0, 1fr));
