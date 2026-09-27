@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Experience</title>
+<title>Listening to a proton tunnel</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -28,6 +28,13 @@
     gap: 10px;
     padding: 10px 14px 4px;
     flex-wrap: wrap;
+  }
+  header h1 {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    color: #eceae4;
   }
   .orbs { display: flex; gap: 8px; }
   .orb {
@@ -121,6 +128,42 @@
     width: 92px;
     margin: 0;
     accent-color: #2b35c8;
+  }
+  #banks {
+    position: absolute;
+    top: 58px;
+    right: 14px;
+    z-index: 3;
+    width: min(280px, 42vw);
+    padding: 8px 10px 6px;
+    border-radius: 12px;
+    background: rgba(14, 14, 16, 0.62);
+    pointer-events: none;
+  }
+  #banks canvas { width: 100%; height: 72px; display: block; }
+  #bank-rows { margin: 4px 0 0; }
+  #bank-rows p { margin: 0; font-size: 10px; line-height: 1.35; color: #c9c6e2; }
+  #bank-rows p.pending { color: #6e6a78; }
+  #film {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+    opacity: 0;
+  }
+  #film.show { animation: film-flicker 0.22s steps(2, end) infinite; }
+  #film svg { width: 100%; height: 100%; display: block; }
+  #film-label {
+    position: absolute;
+    right: 14px;
+    bottom: 108px;
+    color: #8e8aa6;
+    font-size: 10px;
+  }
+  @keyframes film-flicker {
+    0% { opacity: 0.05; }
+    40% { opacity: 0.16; }
+    100% { opacity: 0.04; }
   }
   #collapse-note {
     position: absolute;
@@ -245,6 +288,7 @@
 <div id="app">
   <header>
     <div class="orbs" id="orbs"></div>
+    <h1>Listening to a proton tunnel</h1>
     <span id="scale"></span>
     <button id="begin" type="button">Begin</button>
   </header>
@@ -269,6 +313,19 @@
   <p id="isotope-note"></p>
   <p id="caption">Tap to observe. Headphones on: listen to the proton pass through the wall.</p>
   <p id="collapse-note"></p>
+  <div id="banks">
+    <canvas id="bank-plot" width="520" height="144"></canvas>
+    <div id="bank-rows"></div>
+  </div>
+  <div id="film" hidden>
+    <svg aria-hidden="true">
+      <filter id="film-grain">
+        <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" seed="3"/>
+      </filter>
+      <rect width="100%" height="100%" filter="url(#film-grain)" opacity="0.55"/>
+    </svg>
+    <span id="film-label">film flicker · illustration</span>
+  </div>
   <footer>Time is slowed for human perception. Period ratios between isotopes are physical.</footer>
   <div id="grain">
     <div id="grain-row">
@@ -288,6 +345,7 @@
 <script id="experience-data" type="application/json">__EXPERIENCE_DATA__</script>
 <script id="bank-data" type="application/json">__BANK_DATA__</script>
 <script id="atlas-data" type="application/json">__ATLAS_BANK__</script>
+<script id="atlas-banks" type="application/json">__ATLAS_BANKS__</script>
 <script id="intro-data" type="application/json">__INTRO_FRAMES__</script>
 <script id="wall-audio-data" type="text/plain">__WALL_AUDIO__</script>
 <script id="wall-cover-data" type="text/plain">__WALL_COVER__</script>
@@ -295,6 +353,7 @@
 const DATA = JSON.parse(document.getElementById("experience-data").textContent);
 const BANK = JSON.parse(document.getElementById("bank-data").textContent);
 const ATLAS = JSON.parse(document.getElementById("atlas-data").textContent);
+const BANKS = JSON.parse(document.getElementById("atlas-banks").textContent);
 const INTRO = JSON.parse(document.getElementById("intro-data").textContent);
 const wallAudio = document.getElementById("wall-audio");
 const wallButton = document.getElementById("wall");
@@ -519,6 +578,22 @@ function sampleMovie(name, time, mirror) {
   return { density, phase, donor, acceptor, movie, e0: movie.e0_ev };
 }
 
+function panExtent(movie) {
+  let extent = 0;
+  for (let i = 0; i < movie.donor.length; i++) {
+    extent = Math.max(extent, Math.abs(movie.acceptor[i] - movie.donor[i]));
+  }
+  return extent || 1;
+}
+
+function crossingPan(raw, fromMovie, toMovie, t) {
+  const extent = panExtent(fromMovie) * (1 - t) + panExtent(toMovie) * t;
+  let pan = raw / (extent || 1);
+  if (pan >= 0.999) pan = 1;
+  if (pan <= -0.999) pan = -1;
+  return Math.max(-1, Math.min(1, pan));
+}
+
 function blendFields(from, to, t) {
   const n = from.density.length;
   const density = new Float32Array(n);
@@ -534,7 +609,7 @@ function blendFields(from, to, t) {
     phase,
     donor,
     acceptor,
-    pan: Math.max(-1, Math.min(1, acceptor - donor)),
+    pan: crossingPan(acceptor - donor, from.movie, to.movie, t),
     e0: from.e0 * (1 - t) + to.e0 * t,
     movie: t < 0.5 ? from.movie : to.movie,
   };
@@ -835,7 +910,7 @@ function draw(state) {
   ctx.fillStyle = "#eeeafc";
   ctx.fillText(readout, geom.pad, h * 0.055);
   if (turns) {
-    drawWallBracket(geom, turns);
+    drawWallBracket(geom, turns, waveY);
     drawForbiddenLabel(geom, turns);
   }
 
@@ -952,20 +1027,24 @@ function drawBlochSphere() {
 
   ctx.fillStyle = "rgba(228, 226, 255, 0.88)";
   ctx.font = Math.max(10, Math.floor(radius * 0.16)) + "px ui-monospace, Menlo, Consolas, monospace";
-  const simulator = Boolean(ATLAS && (ATLAS.execution === "simulator" || ATLAS.provider === "aer"));
+  const execution = ATLAS && ATLAS.execution ? ATLAS.execution : "simulator";
   const provider = ATLAS && ATLAS.provider ? ATLAS.provider : "aer";
+  const backend = ATLAS && ATLAS.backend ? ATLAS.backend : "automatic";
   const shots = ATLAS && ATLAS.shots ? ATLAS.shots : 4096;
   const lines = [];
   let lengthLabel = "";
   if (measuredLength < 1) {
-    if (simulator) {
-      lengthLabel = "|r| = " + measuredLength.toFixed(2) + " · shot noise (" + shots + " shots, " + provider + " simulator)";
-    } else {
+    if (execution === "hardware") {
       lengthLabel = "coherence |r| = " + measuredLength.toFixed(2);
+    } else if (execution === "emulated" || String(backend).indexOf("fake_") === 0) {
+      const device = String(backend).replace(/^fake_/, "") || backend;
+      lengthLabel = "|r| = " + measuredLength.toFixed(2) + " · emulated device noise (" + device + " noise model)";
+    } else {
+      lengthLabel = "|r| = " + measuredLength.toFixed(2) + " · shot noise (simulator)";
     }
     lines.push(lengthLabel);
-  } else if (simulator) {
-    lines.push(provider + " simulator");
+  } else if (execution !== "hardware") {
+    lines.push(shots + " shots · " + provider + " simulator");
   }
   lines.forEach((line, index) => {
     const width = ctx.measureText(line).width;
@@ -1033,7 +1112,7 @@ function drawTunnelTail(geom, waveY, turns) {
   ctx.restore();
 }
 
-function drawWallBracket(geom, turns) {
+function drawWallBracket(geom, turns, waveY) {
   const y = geom.base;
   const x0 = geom.xOfX(turns.left);
   const x1 = geom.xOfX(turns.right);
@@ -1055,7 +1134,42 @@ function drawWallBracket(geom, turns) {
   ctx.fillStyle = "rgba(236, 232, 255, 0.88)";
   ctx.font = fontPx + "px ui-monospace, Menlo, Consolas, monospace";
   const textW = ctx.measureText(caption).width;
-  ctx.fillText(caption, (x0 + x1) * 0.5 - textW * 0.5, y + tick + fontPx + Math.max(2, geom.h * 0.006));
+  let textX = (x0 + x1) * 0.5 - textW * 0.5;
+  textX = Math.max(geom.pad, Math.min(textX, geom.w - geom.pad - textW));
+  const gap = Math.max(14, geom.h * 0.02);
+  const hitsWave = (top, bottom) => {
+    for (let i = 0; i < geom.n; i++) {
+      const x = geom.xOf(i);
+      if (x < textX - 8 || x > textX + textW + 8) continue;
+      const wy = waveY ? waveY[i] : y;
+      const waveTop = Math.min(wy, y) - 8;
+      const waveBottom = Math.max(wy, y) + 8;
+      if (bottom > waveTop && top < waveBottom) return true;
+    }
+    return false;
+  };
+  // Prefer the strip under the energy line. If that meets the wave, sit above the crest.
+  let textY = y + tick + fontPx + gap;
+  if (hitsWave(textY - fontPx, textY + 4) || textY > geom.h - 6) {
+    let crest = y;
+    for (let i = 0; i < geom.n; i++) {
+      const x = geom.xOf(i);
+      if (x < textX - 8 || x > textX + textW + 8) continue;
+      if (waveY && waveY[i] < crest) crest = waveY[i];
+    }
+    textY = crest - gap;
+  }
+  if (hitsWave(textY - fontPx, textY + 4) || textY - fontPx < 4) {
+    textY = Math.max(fontPx + 6, geom.h * 0.06);
+    if (hitsWave(textY - fontPx, textY + 4)) textY = geom.h - 6;
+  }
+  window.__wallLabel = {
+    x: textX,
+    top: textY - fontPx,
+    bottom: textY + 4,
+    hitsWave: hitsWave(textY - fontPx, textY + 4),
+  };
+  ctx.fillText(caption, textX, textY);
 }
 
 function drawForbiddenLabel(geom, turns) {
@@ -1121,6 +1235,12 @@ function applyMeasurement(count) {
   window.__measurements = measurementCount;
   window.__shotNoise = level;
   window.__noiseLive = Boolean(audio && audio.noiseGain);
+  const film = document.getElementById("film");
+  if (film) {
+    const illustrate = measurementCount === 64;
+    film.hidden = !illustrate;
+    film.classList.toggle("show", illustrate);
+  }
 }
 
 document.getElementById("grain").addEventListener("pointerdown", (event) => {
@@ -1172,6 +1292,84 @@ function introPanels(intro) {
   return null;
 }
 
+function startIntroDrone() {
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtx) return;
+  const ctx = new AudioCtx();
+  const master = ctx.createGain();
+  const now = ctx.currentTime;
+  master.gain.setValueAtTime(0.0001, now);
+  master.connect(ctx.destination);
+  master.gain.linearRampToValueAtTime(0.04, now + 0.7);
+  master.gain.linearRampToValueAtTime(0.0001, now + 4.3);
+  [92, 138, 184].forEach((freq, index) => {
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(freq, now);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(index === 0 ? 0.8 : 0.16, now);
+    osc.connect(gain);
+    gain.connect(master);
+    osc.start();
+    osc.stop(now + 4.6);
+  });
+  document.addEventListener("pointerdown", () => { ctx.resume(); }, { once: true });
+  ctx.resume();
+}
+
+function bankSeriesLabel(bank) {
+  const execution = bank.execution || "";
+  const backend = bank.backend || "";
+  if (execution === "hardware") return "coherence |r|";
+  if (execution === "emulated" || String(backend).indexOf("fake_") === 0) {
+    return "emulated device noise (" + String(backend).replace(/^fake_/, "") + " noise model)";
+  }
+  if (bank.provider === "aer" || execution === "simulator") return "shot noise (simulator)";
+  return (bank.provider || "bank") + "/" + backend;
+}
+
+function drawBankPanel() {
+  const plot = document.getElementById("bank-plot");
+  const rows = document.getElementById("bank-rows");
+  if (!plot || !rows || !BANKS) return;
+  const banks = Array.isArray(BANKS.banks) ? BANKS.banks : [];
+  const g = plot.getContext("2d");
+  const w = plot.width;
+  const h = plot.height;
+  g.clearRect(0, 0, w, h);
+  const ideal = (banks[0] && banks[0].points) || (ATLAS && ATLAS.points) || [];
+  function plotSeries(points, color, key) {
+    if (!points.length) return;
+    g.beginPath();
+    points.forEach((point, index) => {
+      const x = 8 + Number(point.t_over_period) * (w - 16);
+      const y = h - 10 - Number(point[key]) * (h - 20);
+      if (index === 0) g.moveTo(x, y);
+      else g.lineTo(x, y);
+    });
+    g.strokeStyle = color;
+    g.lineWidth = key === "ideal_acceptor" ? 2.4 : 1.6;
+    g.stroke();
+  }
+  plotSeries(ideal, "#eceae4", "ideal_acceptor");
+  ["#9aa2ff", "#e4a23a", "#3cbaa6"].forEach((color, index) => {
+    if (banks[index]) plotSeries(banks[index].points || [], color, "acceptor_population");
+  });
+  rows.textContent = "";
+  banks.forEach((bank) => {
+    const line = document.createElement("p");
+    line.textContent = (bank.provider || "aer") + "/" + (bank.backend || "automatic") + " · " + bankSeriesLabel(bank);
+    rows.appendChild(line);
+  });
+  if (BANKS.hardwarePending) {
+    const line = document.createElement("p");
+    line.className = "pending";
+    line.textContent = "hardware run: pending QPU access";
+    rows.appendChild(line);
+  }
+}
+drawBankPanel();
+
 function startIntro() {
   const panels = introPanels(INTRO);
   const begin = document.getElementById("begin");
@@ -1183,6 +1381,7 @@ function startIntro() {
   const overlay = document.getElementById("intro");
   begin.disabled = true;
   overlay.hidden = false;
+  startIntroDrone();
   const started = performance.now();
   function tick(now) {
     if ((now - started) / 1000 >= 4.5) {
@@ -1321,11 +1520,16 @@ function retune(now) {
 function followPan(state) {
   const now = audio.ctx.currentTime;
   if (audio.nextPan && now < audio.nextPan) return;
-  audio.nextPan = now + 0.05;
-  const target = state.pan;
+  audio.nextPan = now + 0.04;
+  let target = state.pan;
+  if (target >= 0.999) target = 1;
+  if (target <= -0.999) target = -1;
   const pan = audio.panner.pan;
   pan.setValueAtTime(pan.value, now);
-  pan.setTargetAtTime(target, now, 0.08);
+  pan.linearRampToValueAtTime(target, now + 0.04);
+  if (!window.__panSeen) window.__panSeen = { min: target, max: target };
+  window.__panSeen.min = Math.min(window.__panSeen.min, target);
+  window.__panSeen.max = Math.max(window.__panSeen.max, target);
 }
 
 function ringBell() {

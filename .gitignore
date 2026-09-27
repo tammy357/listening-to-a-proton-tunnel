@@ -7,4 +7,5 @@ __pycache__/
 !atlas_music/*.wav
 !notebooks/media/*.wav
 !notebooks/media/through_the_wall/*.wav
+!docs/audio/*.wav
 .pytest_cache/

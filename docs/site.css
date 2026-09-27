@@ -1,0 +1,44 @@
+:root {
+  color-scheme: dark;
+  --ink: #eceae4;
+  --muted: #8d8b84;
+  --accent: #2b35c8;
+  --paper: #0b0b0d;
+  --panel: #121216;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "JetBrains Mono", "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+body { padding: 2.2rem 1.2rem 4rem; }
+main { max-width: 880px; margin: 0 auto; }
+a { color: #9aa2ff; }
+nav { display: flex; flex-wrap: wrap; gap: 0.8rem 1.2rem; margin: 1.4rem 0 2rem; font-size: 0.92rem; }
+h1 { font-size: 1.55rem; font-weight: 500; letter-spacing: -0.03em; margin: 0 0 0.8rem; }
+h2 { font-size: 1.05rem; font-weight: 500; margin: 2rem 0 0.6rem; }
+p, li { line-height: 1.55; }
+.muted { color: var(--muted); }
+.pipeline { display: flex; flex-direction: column; gap: 0.55rem; margin: 1rem 0; }
+.pipe { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+.pipe em { color: #9aa2ff; font-style: normal; min-width: 5.2rem; font-size: 0.75rem; }
+.pipe span {
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 0.28rem 0.65rem;
+  font-size: 0.78rem;
+}
+.track {
+  background: var(--panel);
+  border: 1px solid #2a2a32;
+  border-radius: 14px;
+  padding: 0.9rem 1rem 1rem;
+  margin: 0.8rem 0;
+}
+.track h2 { margin: 0 0 0.35rem; }
+audio, video, img.sheet { width: 100%; }
+img.cover { width: min(420px, 100%); display: block; border-radius: 8px; }
+.jobs { color: var(--muted); font-size: 0.75rem; }
+.warm { font-size: 1.05rem; }

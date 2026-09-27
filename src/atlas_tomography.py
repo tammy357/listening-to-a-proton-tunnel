@@ -16,8 +16,10 @@ Acceptor population is ``(1 - z) / 2``.
 
 from __future__ import annotations
 
+import argparse
 import json
 import math
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,10 +40,105 @@ ISOTOPE = "H"
 N_TIMES = 24
 SHOTS = 4096
 ENGINE = "tomography-api-v2"
+# Schema defaults from moth-api v0.41.0. provider_name and backend_name are
+# free strings. The document names no other values and has no enum.
 PROVIDER = "aer"
 BACKEND = "automatic"
-OUTPUT_PATH = Path(__file__).resolve().parent / "atlas_bank.json"
+CANONICAL_BANK = Path(__file__).resolve().parent / "atlas_bank.json"
 MAX_POPULATION_ERROR = 0.02
+HARDWARE_PENDING = "hardware run: pending QPU access"
+
+
+def parse_backend_flag(value: str) -> tuple[str, str]:
+    """Return ``(provider_name, backend_name)`` for ``--backend``.
+
+    ``aer`` selects the schema defaults, ``aer`` and ``automatic``.
+    Any other setting must be ``provider/backend``. Both halves are passed
+    through as the free strings the schema defines. Nothing else is invented.
+    """
+
+    text = value.strip()
+    if text == PROVIDER:
+        return PROVIDER, BACKEND
+    if "/" not in text:
+        raise SystemExit(
+            "tomography-api-v2 names only the defaults aer and automatic. "
+            "Pass --backend aer, or --backend provider/backend."
+        )
+    provider, backend = text.split("/", 1)
+    provider = provider.strip()
+    backend = backend.strip()
+    if not provider or not backend:
+        raise SystemExit("Pass --backend aer, or --backend provider/backend.")
+    return provider, backend
+
+
+def _slug(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", value)
+
+
+def bank_destination(provider: str, backend: str) -> Path:
+    """A new bank file beside the saved aer run. Never the canonical path."""
+
+    path = CANONICAL_BANK.parent / f"atlas_bank_{_slug(provider)}_{_slug(backend)}.json"
+    if path.resolve() == CANONICAL_BANK.resolve():
+        raise RuntimeError("Refusing to overwrite src/atlas_bank.json.")
+    return path
+
+
+def length_label(bank: dict) -> str:
+    """How to name |r|, from the bank's recorded execution. Coherence is hardware only."""
+
+    execution = str(bank.get("execution", "")).lower()
+    provider = str(bank.get("provider", "")).lower()
+    backend = str(bank.get("backend", ""))
+    if execution == "hardware":
+        return "coherence |r|"
+    if execution == "emulated" or backend.startswith("fake_"):
+        device = backend.removeprefix("fake_") or backend
+        return f"emulated device noise ({device} noise model)"
+    if provider == "aer" or execution == "simulator":
+        return "shot noise (simulator)"
+    return f"|r| · {bank.get('provider', 'unknown')}/{backend or 'unknown'}"
+
+
+def _execution_for(provider: str, backend: str, payload: dict | None) -> str:
+    """Label a new run from the schema defaults and any hardware marker in the result."""
+
+    if provider == "aer":
+        return "simulator"
+    if backend.startswith("fake_"):
+        return "emulated"
+    blob = json.dumps(payload or {})
+    if '"qpu_job_id":' in blob and '"qpu_job_id": null' not in blob and '"qpu_job_id":null' not in blob:
+        return "hardware"
+    return "unspecified"
+
+
+def load_tomography_banks(folder: Path | None = None) -> list[dict]:
+    """The canonical aer bank, then any ``atlas_bank_<provider>_<backend>.json`` beside it."""
+
+    folder = folder or CANONICAL_BANK.parent
+    banks: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    paths = []
+    if (folder / "atlas_bank.json").exists():
+        paths.append(folder / "atlas_bank.json")
+    paths.extend(sorted(folder.glob("atlas_bank_*.json")))
+    for path in paths:
+        bank = json.loads(path.read_text(encoding="utf-8"))
+        bank["_path"] = str(path.name)
+        key = (str(bank.get("provider", "")), str(bank.get("backend", "")))
+        if key in seen:
+            continue
+        seen.add(key)
+        banks.append(bank)
+    return banks
+
+
+def hardware_pending(banks: list[dict] | None = None) -> bool:
+    banks = load_tomography_banks() if banks is None else banks
+    return not any(str(bank.get("execution", "")).lower() == "hardware" for bank in banks)
 
 
 def level_ratios() -> dict[str, float]:
@@ -100,7 +197,12 @@ def circuit_qasm(t_over_period: float) -> str:
     return qasm2.dumps(circuit)
 
 
-def tomography_params(qasm: str, shots: int = SHOTS) -> dict:
+def tomography_params(
+    qasm: str,
+    shots: int = SHOTS,
+    provider: str = PROVIDER,
+    backend: str = BACKEND,
+) -> dict:
     """Params object for ``tomography-api-v2``."""
 
     return {
@@ -110,8 +212,8 @@ def tomography_params(qasm: str, shots: int = SHOTS) -> dict:
         "mutual_information": False,
         "classical_mutual_information": False,
         "shots": int(shots),
-        "provider_name": PROVIDER,
-        "backend_name": BACKEND,
+        "provider_name": provider,
+        "backend_name": backend,
         "qubit_list": [0],
     }
 
@@ -154,13 +256,23 @@ def bloch_length_shot_noise(t_over_period: float, shots: int) -> float:
     return abs(math.sin(2.0 * theta)) / math.sqrt(2.0 * shots)
 
 
-def _complete_job(client: MothClient, job_id: str, index: int, shots: int) -> str:
+def _complete_job(
+    client: MothClient,
+    job_id: str,
+    index: int,
+    shots: int,
+    provider: str,
+    backend: str,
+) -> str:
     """Wait for one tomography job, resubmitting when the engine asks for a retry."""
 
     fraction = index / N_TIMES
     for attempt in range(4):
         if not job_id:
-            job_id = client.submit(ENGINE, tomography_params(circuit_qasm(fraction), shots))
+            job_id = client.submit(
+                ENGINE,
+                tomography_params(circuit_qasm(fraction), shots, provider, backend),
+            )
             print(f"submitted t={fraction:.4f} job={job_id}")
         status = client.wait(job_id)
         if status.get("status") == "completed":
@@ -180,12 +292,14 @@ def _collect_points(
     exact: list[float],
     predicted: list[float],
     shots: int,
+    provider: str,
+    backend: str,
 ) -> list[dict]:
     """Finish each time point, one job at a time, and keep the Bloch sample."""
 
     points = []
     for index in range(N_TIMES):
-        job_id = _complete_job(client, jobs[index], index, shots)
+        job_id = _complete_job(client, jobs[index], index, shots, provider, backend)
         jobs[index] = job_id
         bloch = bloch_from_result(client.result(job_id))
         fraction = index / N_TIMES
@@ -215,11 +329,21 @@ def _collect_points(
 
 
 def write_atlas_bank(
-    path: Path = OUTPUT_PATH,
+    path: Path | None = None,
     shots: int = SHOTS,
     existing_jobs: list[str] | None = None,
+    provider: str = PROVIDER,
+    backend: str = BACKEND,
 ) -> Path:
-    """Check the RX reduction locally, then sample 24 tomography jobs."""
+    """Check the RX reduction locally, then sample 24 tomography jobs.
+
+    The file is always ``atlas_bank_<provider>_<backend>.json``. The saved
+    aer bank at ``src/atlas_bank.json`` is left untouched.
+    """
+
+    path = path or bank_destination(provider, backend)
+    if path.resolve() == CANONICAL_BANK.resolve():
+        raise RuntimeError("Refusing to overwrite src/atlas_bank.json.")
 
     ratios = level_ratios()
     for mass, ratio in ratios.items():
@@ -240,15 +364,20 @@ def write_atlas_bank(
         jobs = list(existing_jobs)
         if len(jobs) != N_TIMES:
             raise RuntimeError(f"Expected {N_TIMES} existing jobs, got {len(jobs)}.")
-    points = _collect_points(client, jobs, exact, predicted, shots)
+    points = _collect_points(client, jobs, exact, predicted, shots, provider, backend)
+    sample_payload = client.result(jobs[0]) if jobs and jobs[0] else None
+    execution = _execution_for(provider, backend, sample_payload)
 
     payload = {
-        "provider": PROVIDER,
-        "backend": BACKEND,
+        "provider": provider,
+        "backend": backend,
         "shots": int(shots),
         "date": datetime.now(timezone.utc).isoformat(),
         "engine": ENGINE,
-        "execution": "simulator",
+        "execution": execution,
+        "length_label": length_label(
+            {"provider": provider, "backend": backend, "execution": execution}
+        ),
         "job_ids": jobs,
         "bloch_source": "result.observables['0'] keys X, Y, Z",
         "acceptor_formula": "(1 - z) / 2",
@@ -258,7 +387,35 @@ def write_atlas_bank(
     return path
 
 
-if __name__ == "__main__":
-    prior = sys.argv[1:]
-    destination = write_atlas_bank(existing_jobs=prior or None)
+def main(argv: list[str] | None = None) -> Path:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Run tomography-api-v2. The schema defaults are provider_name=aer "
+            "and backend_name=automatic. Both are free strings; the schema "
+            "enumerates no hardware backend."
+        )
+    )
+    parser.add_argument(
+        "--backend",
+        default=PROVIDER,
+        help="aer (schema defaults aer / automatic), or provider/backend",
+    )
+    parser.add_argument(
+        "existing_jobs",
+        nargs="*",
+        help="Optional 24 job ids to resume. A new run still writes a new file.",
+    )
+    args = parser.parse_args(argv)
+    provider, backend = parse_backend_flag(args.backend)
+    destination = write_atlas_bank(
+        path=bank_destination(provider, backend),
+        existing_jobs=args.existing_jobs or None,
+        provider=provider,
+        backend=backend,
+    )
     print(f"wrote {destination}")
+    return destination
+
+
+if __name__ == "__main__":
+    main()

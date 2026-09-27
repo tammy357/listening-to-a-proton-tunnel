@@ -753,6 +753,8 @@ def liner_notes_markdown(tracks: list[dict] | None = None) -> str:
     lines = [
         "# Through the Wall",
         "",
+        "Listening to a proton tunnel",
+        "",
         "a short piece in three movements and a coda",
         "",
         "Cover: the proton's crossing, position across and time down, coloured by phase.",

@@ -59,7 +59,7 @@ MODES = {
 
 def main() -> None:
     st.set_page_config(
-        page_title="Listening to Quantum Tunneling",
+        page_title="Listening to a proton tunnel",
         page_icon="⚡",
         layout="wide",
         initial_sidebar_state="collapsed",
@@ -124,6 +124,14 @@ def _experience_document(stamp: tuple) -> str:
     bank = bank_path.read_text(encoding="utf-8")
     atlas_path = root / "src" / "atlas_bank.json"
     atlas = atlas_path.read_text(encoding="utf-8") if atlas_path.exists() else "null"
+    from src.atlas_tomography import hardware_pending, load_tomography_banks
+
+    saved_banks = []
+    for saved in load_tomography_banks():
+        saved_banks.append({key: value for key, value in saved.items() if key != "_path"})
+    atlas_banks = json.dumps(
+        {"banks": saved_banks, "hardwarePending": hardware_pending(saved_banks)}
+    )
     intro = _intro_frames_json(root / "atlas_outputs")
     piece = root / "notebooks" / "media" / "through_the_wall.wav"
     wall_audio = _data_url(piece, "audio/wav") if piece.exists() else ""
@@ -135,6 +143,7 @@ def _experience_document(stamp: tuple) -> str:
         ("__EXPERIENCE_DATA__", data),
         ("__BANK_DATA__", bank),
         ("__ATLAS_BANK__", atlas),
+        ("__ATLAS_BANKS__", atlas_banks),
         ("__INTRO_FRAMES__", intro),
         ("__WALL_AUDIO__", wall_audio),
         ("__WALL_COVER__", wall_cover),
@@ -228,6 +237,12 @@ def _pipeline() -> None:
             <span class="engine">Retrocausal Echo</span><i>→</i>
             <span>the piece</span>
           </div>
+          <div class="pipe">
+            <em>develop</em>
+            <span>|ψ|² at T/4</span><i>→</i>
+            <span>one grain per measurement</span><i>→</i>
+            <span>contact sheet and film</span>
+          </div>
         </div>
         <p class="pipe-caption">Each engine does one job, and each job follows the physics.</p>
         """,
@@ -236,6 +251,7 @@ def _pipeline() -> None:
 
 
 def _render_lab() -> None:
+    st.markdown("<p class='piece-title'>Listening to a proton tunnel</p>", unsafe_allow_html=True)
     controls = _sidebar()
     root = Path(__file__).resolve().parent
     components.html(_experience_document(_experience_stamp(root)), height=400, scrolling=False)
@@ -278,6 +294,7 @@ The proton is also treated as what it really is at this scale: a qubit. Atlas me
     if atlas_figure is not None:
         _chart(atlas_figure)
         st.caption(atlas_note)
+        _tomography_rows()
         with st.expander("Job ids", expanded=False):
             st.code("\n".join(atlas_jobs), language="text")
     st.caption(
@@ -322,6 +339,37 @@ Everything here ran on simulators, and the echo's physics belongs to its qubit c
     st.markdown(
         "Through the Wall, cover and pipeline by Lily S. Engines by Moth; Retrocausal Echo by Spencer Topel."
     )
+
+    _section("07", "Exposures")
+    _exposures(root)
+
+
+def _tomography_rows() -> None:
+    from src.atlas_tomography import HARDWARE_PENDING, hardware_pending, length_label, load_tomography_banks
+
+    banks = load_tomography_banks()
+    lines = []
+    for bank in banks:
+        label = f"{bank.get('provider')}/{bank.get('backend')} · {length_label(bank)}"
+        lines.append(f"<p class='bank-row'>{html.escape(label)}</p>")
+    if hardware_pending(banks):
+        lines.append(f"<p class='bank-row pending'>{html.escape(HARDWARE_PENDING)}</p>")
+    if lines:
+        st.markdown("".join(lines), unsafe_allow_html=True)
+
+
+def _exposures(root: Path) -> None:
+    from src.exposures import WARM_LINE, exposure_caption
+
+    sheet = root / "exposures" / "contact_sheet.png"
+    if sheet.exists():
+        st.image(str(sheet), caption=exposure_caption())
+    video = root / "exposures" / "developing_H.mp4"
+    if video.exists():
+        st.video(str(video))
+    elif not sheet.exists():
+        st.info("The contact sheet is written by python src/exposures.py.")
+    st.markdown(WARM_LINE)
 
 
 def _ep_players(root: Path) -> None:
@@ -686,17 +734,25 @@ def _atlas_figure() -> tuple[go.Figure | None, str, list[str]]:
             hovertemplate="t = %{x:.3f} T_tun<br>exact = %{y:.3f}<extra></extra>",
         )
     )
-    figure.add_trace(
-        go.Scatter(
-            x=times,
-            y=measured,
-            name="two-level model (Atlas)",
-            mode="lines+markers",
-            line={"color": PLOT_ALT, "width": 1.6},
-            marker={"size": 7, "color": PLOT_ALT},
-            hovertemplate="t = %{x:.3f} T_tun<br>Atlas P = %{y:.3f}<extra></extra>",
+    from src.atlas_tomography import length_label, load_tomography_banks
+
+    banks = load_tomography_banks() or [bank]
+    palette = [PLOT_ALT, "#e4a23a", "#3cbaa6", "#e07a5f"]
+    for index, saved in enumerate(banks):
+        saved_points = saved.get("points") or []
+        if not saved_points:
+            continue
+        figure.add_trace(
+            go.Scatter(
+                x=[float(point["t_over_period"]) for point in saved_points],
+                y=[float(point["acceptor_population"]) for point in saved_points],
+                name=f"{saved.get('provider')}/{saved.get('backend')} · {length_label(saved)}",
+                mode="lines+markers",
+                line={"color": palette[index % len(palette)], "width": 1.6},
+                marker={"size": 7, "color": palette[index % len(palette)]},
+                hovertemplate="t = %{x:.3f} T_tun<br>measured = %{y:.3f}<extra></extra>",
+            )
         )
-    )
     simulator = _atlas_is_simulator(bank)
     if simulator:
         grid = np.linspace(0.0, 1.0, 361)
@@ -1052,8 +1108,19 @@ def _inject_css() -> None:
             left: 0.55rem !important;
             z-index: 1000 !important;
           }
-          html, body, [class*="css"], .stApp, .stMarkdown, p, span, label, button, input, textarea {
+          html, body, [class*="css"], .stApp, .stMarkdown, p, label, input, textarea,
+          span:not([class*="material"]):not([data-testid="stIconMaterial"]),
+          button:not(:has([class*="material"])):not(:has([data-testid="stIconMaterial"])) {
             font-family: "JetBrains Mono", "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace !important;
+          }
+          span[class*="material"],
+          [data-testid="stIconMaterial"],
+          [data-testid="stSidebarCollapsedControl"],
+          [data-testid="stSidebarCollapsedControl"] *,
+          [data-testid="stExpandSidebarButton"],
+          [data-testid="stExpandSidebarButton"] *,
+          [data-testid="stSidebarNav"] span[class*="material"] {
+            font-family: "Material Symbols Rounded", "Material Symbols Outlined", sans-serif !important;
           }
           .stApp { background: #0b0b0d; color: #eceae4; }
           .block-container { padding-top: 1.1rem; max-width: 1180px; }
@@ -1087,6 +1154,14 @@ def _inject_css() -> None:
           .pipe i { color: #9aa2ff; font-style: normal; }
           .pipe-caption { color: #8d8b84; font-size: 0.85rem; margin: 0.15rem 0 0.2rem; }
           .ep-jobs { color: #8d8b84; font-size: 0.75rem; margin: 0.15rem 0 1.1rem; line-height: 1.45; }
+          .piece-title {
+            margin: 0.2rem 0 0.6rem;
+            font-size: 1.05rem;
+            letter-spacing: -0.02em;
+            color: #eceae4;
+          }
+          .bank-row { margin: 0.12rem 0; font-size: 0.82rem; color: #eceae4; }
+          .bank-row.pending { color: #6e6a78; }
           .metric-grid {
             display: grid;
             grid-template-columns: repeat(5, minmax(0, 1fr));
