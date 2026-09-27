@@ -93,7 +93,11 @@ Section 09, an 8-qubit encoding with shot counts on the 256 grid sites, was not 
 
 ## Pages
 
-The static site lives in `docs/` for GitHub Pages on the `docs/` folder: the Experience, the dark notebook, the EP with players and liner notes, and the contact sheet.
+The static site is published from the `docs/` folder:
+
+https://tammy357.github.io/listening-to-a-proton-tunnel/
+
+It holds the Experience, the dark notebook, the EP with players and liner notes, and the contact sheet. The repository is https://github.com/tammy357/listening-to-a-proton-tunnel.
 
 ## Layout
 
