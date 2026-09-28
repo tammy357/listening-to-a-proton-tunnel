@@ -51,18 +51,99 @@
   .orb[aria-pressed="true"] {
     box-shadow: 0 0 16px rgba(150, 170, 255, 0.85), inset 0 0 10px rgba(220, 220, 255, 0.45);
   }
-  #begin {
+  #header-actions {
     margin-left: auto;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+  #begin, #tour-open {
     border: 1px solid #1f2a8a;
     background: #141428;
     color: #e4e2ff;
     border-radius: 999px;
-    padding: 8px 14px;
-    font: 12px ui-monospace, Menlo, Consolas, monospace;
+    padding: 10px 14px;
+    min-height: 44px;
+    font: 15px/1.2 ui-monospace, Menlo, Consolas, monospace;
     white-space: nowrap;
     cursor: pointer;
   }
   #begin:disabled { opacity: 0.7; cursor: default; }
+  #begin:focus-visible, #tour-open:focus-visible, #tour button:focus-visible, .orb:focus-visible {
+    outline: 3px solid #f4f2ff;
+    outline-offset: 2px;
+  }
+  .orb.tour-focus {
+    outline: 3px solid #f4f2ff;
+    outline-offset: 4px;
+    box-shadow: 0 0 18px rgba(244, 242, 255, 0.9);
+  }
+  #grain.tour-focus {
+    outline: 3px solid #f4f2ff;
+    box-shadow: 0 0 0 4px rgba(43, 53, 200, 0.85);
+  }
+  canvas.tour-focus { outline: 3px solid rgba(244, 242, 255, 0.85); outline-offset: -6px; }
+  #tour {
+    position: absolute;
+    left: 10px;
+    right: 10px;
+    bottom: 10px;
+    z-index: 6;
+    max-height: min(48vh, 320px);
+    overflow: auto;
+    padding: 16px 16px 14px;
+    border: 1px solid #2b35c8;
+    border-radius: 18px;
+    background: rgba(11, 11, 13, 0.94);
+    color: #f4f2ff;
+  }
+  #tour.raised { bottom: auto; top: 62px; }
+  #tour[hidden], #tour [hidden] { display: none !important; }
+  #tour-count {
+    margin: 0;
+    font-size: 14px;
+    letter-spacing: 0.04em;
+    color: #9aa2ff;
+  }
+  #tour-title {
+    margin: 8px 0 0;
+    font-size: 1.35rem;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+  }
+  #tour-line {
+    margin: 10px 0 14px;
+    font-size: 1.2rem;
+    line-height: 1.45;
+    color: #f7f4ff;
+  }
+  #tour-line:focus { outline: none; }
+  #tour-real {
+    margin: 8px 0 14px;
+    padding-left: 1.2rem;
+    font-size: 1.15rem;
+    line-height: 1.45;
+  }
+  #tour-real li { margin: 0.35rem 0; }
+  #tour-nav { display: flex; gap: 10px; }
+  #tour-nav button {
+    flex: 1;
+    min-height: 48px;
+    border: 1px solid #1f2a8a;
+    border-radius: 999px;
+    background: #141428;
+    color: #f4f2ff;
+    font: 16px/1.2 ui-monospace, Menlo, Consolas, monospace;
+    cursor: pointer;
+  }
+  #tour-next { background: #2b35c8; }
+  @media (max-width: 640px) {
+    header { padding: 8px 10px 4px; }
+    header h1 { font-size: 15px; flex: 1 1 100%; }
+    #tour-line, #tour-real { font-size: 1.28rem; }
+    #scale { display: none; }
+  }
   #scale {
     color: #9d99b8;
     font-size: 11px;
@@ -290,7 +371,10 @@
     <div class="orbs" id="orbs"></div>
     <h1>Listening to a proton tunnel</h1>
     <span id="scale"></span>
-    <button id="begin" type="button">Begin</button>
+    <div id="header-actions">
+      <button id="tour-open" type="button">Guided tour</button>
+      <button id="begin" type="button">Begin</button>
+    </div>
   </header>
   <canvas id="view"></canvas>
   <div id="intro" hidden>
@@ -336,6 +420,16 @@
     </div>
     <p id="grain-kind">sampling illustration</p>
   </div>
+  <section id="tour" hidden aria-labelledby="tour-title tour-line">
+    <p id="tour-count">1 of 5</p>
+    <h2 id="tour-title" tabindex="-1" hidden>What's real, what's not</h2>
+    <p id="tour-line" tabindex="-1" aria-live="polite"></p>
+    <ul id="tour-real" hidden></ul>
+    <div id="tour-nav">
+      <button id="tour-back" type="button">Back</button>
+      <button id="tour-next" type="button">Next</button>
+    </div>
+  </section>
   <button id="wall" type="button" hidden>
     <img id="wall-cover" alt="">
     <span id="wall-label">▶ Through the Wall</span>
@@ -458,6 +552,14 @@ document.getElementById("begin").addEventListener("click", (event) => {
 canvas.addEventListener("pointerdown", (event) => {
   if (event.button !== 0 && event.pointerType === "mouse") return;
   measure();
+  noteTourTap();
+});
+canvas.addEventListener("keydown", (event) => {
+  if (tourStep !== 5) return;
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  measure();
+  noteTourTap();
 });
 
 function selectIsotope(name) {
@@ -905,14 +1007,17 @@ function draw(state) {
   const acceptorLabel = "acceptor";
   ctx.fillText(acceptorLabel, geom.xOf(geom.rightWell) - ctx.measureText(acceptorLabel).width + 18, labelY);
 
-  const movie = DATA.isotopes[active];
-  const readout = active + "   " + movie.period_fs.toFixed(1) + " fs   ΔE " + movie.deltaE_meV.toFixed(2) + " meV   exact simulation";
-  ctx.fillStyle = "#eeeafc";
-  ctx.fillText(readout, geom.pad, h * 0.055);
-  if (turns) {
-    drawWallBracket(geom, turns, waveY);
-    drawForbiddenLabel(geom, turns);
+  if (!tourStep) {
+    const movie = DATA.isotopes[active];
+    const readout = active + "   " + movie.period_fs.toFixed(1) + " fs   ΔE " + movie.deltaE_meV.toFixed(2) + " meV   exact simulation";
+    ctx.fillStyle = "#eeeafc";
+    ctx.fillText(readout, geom.pad, h * 0.055);
+    if (turns) {
+      drawWallBracket(geom, turns, waveY);
+      drawForbiddenLabel(geom, turns);
+    }
   }
+  drawTourCue(geom, waveY, vy, turns, base);
 
   drawPanMeter(state.pan, w, h, geom.pad);
   const bloch = drawBlochSphere();
@@ -1172,6 +1277,63 @@ function drawWallBracket(geom, turns, waveY) {
   ctx.fillText(caption, textX, textY);
 }
 
+function drawTourCue(geom, waveY, vy, turns, base) {
+  if (tourStep === 1) {
+    ctx.save();
+    ctx.shadowBlur = Math.max(18, geom.h * 0.04);
+    ctx.shadowColor = "rgba(255, 250, 255, 0.95)";
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+    ctx.lineWidth = Math.max(2.4, geom.h * 0.006);
+    ctx.beginPath();
+    for (let i = 0; i < geom.n; i++) {
+      const x = geom.xOf(i);
+      if (i === 0) ctx.moveTo(x, waveY[i]);
+      else ctx.lineTo(x, waveY[i]);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+  if (tourStep === 2 && turns) {
+    ctx.save();
+    ctx.shadowBlur = 16;
+    ctx.shadowColor = "rgba(255, 236, 196, 0.9)";
+    ctx.strokeStyle = "rgba(255, 228, 170, 0.95)";
+    ctx.lineWidth = Math.max(3, geom.h * 0.007);
+    ctx.beginPath();
+    let drawing = false;
+    for (let i = 0; i < geom.n; i++) {
+      if (geom.xs[i] < turns.left || geom.xs[i] > turns.right) {
+        drawing = false;
+        continue;
+      }
+      const x = geom.xOf(i);
+      if (!drawing) {
+        ctx.moveTo(x, vy[i]);
+        drawing = true;
+      } else {
+        ctx.lineTo(x, vy[i]);
+      }
+    }
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+    ctx.lineWidth = Math.max(2.2, geom.h * 0.005);
+    ctx.beginPath();
+    ctx.moveTo(geom.pad, base);
+    ctx.lineTo(geom.w - geom.pad, base);
+    ctx.stroke();
+    ctx.restore();
+  }
+  if (tourStep === 3) {
+    const y = geom.h - Math.max(10, geom.h * 0.016);
+    ctx.save();
+    ctx.strokeStyle = "rgba(244, 242, 255, 0.9)";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(geom.pad - 8, y - 10, geom.w - geom.pad * 2 + 16, 20);
+    ctx.restore();
+  }
+}
+
 function drawForbiddenLabel(geom, turns) {
   ctx.fillStyle = "rgba(214, 216, 236, 0.78)";
   ctx.font = Math.max(10, Math.floor(geom.h * 0.018)) + "px ui-monospace, Menlo, Consolas, monospace";
@@ -1370,7 +1532,201 @@ function drawBankPanel() {
 }
 drawBankPanel();
 
+let tourStep = 0;
+let tourCard = false;
+let tourSawTap = false;
+let tourTimers = [];
+
+function wantsGuided() {
+  if (document.body.dataset.guided === "1") return true;
+  try {
+    if (new URLSearchParams(location.search).get("guided") === "1") return true;
+  } catch (err) {
+    void err;
+  }
+  try {
+    if (new URLSearchParams(window.parent.location.search).get("guided") === "1") return true;
+  } catch (err) {
+    void err;
+  }
+  return false;
+}
+
+function spokenRatio(name) {
+  const value = Number(DATA.isotopes[name].period_ratio_to_h);
+  return (Math.round(value * 10) / 10).toFixed(1);
+}
+
+function tourLines() {
+  return [
+    "This glow shows where the proton might be. Brighter means more likely.",
+    "It doesn't have enough energy to climb over this wall.",
+    "In the quantum world, it can turn up on the other side anyway. This is tunnelling. Listen: it moves left to right.",
+    "Make it heavier and it tunnels far more slowly: " + spokenRatio("D") + " times slower, then " + spokenRatio("T") + " times slower.",
+    "Measuring it puts it in one place. Each tap uses a real measurement from Moth's quantum simulator. Measure more times and the wave appears.",
+  ];
+}
+
+function clearTourTimers() {
+  tourTimers.forEach((id) => clearTimeout(id));
+  tourTimers = [];
+}
+
+function startTourAudio() {
+  const begin = document.getElementById("begin");
+  if (!audio) beginAudio();
+  else if (audio.ctx.state !== "running") audio.ctx.resume();
+  if (audio && audio.ctx.state === "running") begin.textContent = "sound on · pause";
+}
+
+function noteTourTap() {
+  if (tourStep !== 5 || tourCard) return;
+  tourSawTap = true;
+  document.getElementById("grain").classList.add("tour-focus");
+  const slider = document.getElementById("grain-slider");
+  if (document.activeElement === canvas) slider.focus();
+}
+
+function paintTour(moveFocus) {
+  const panel = document.getElementById("tour");
+  const count = document.getElementById("tour-count");
+  const title = document.getElementById("tour-title");
+  const line = document.getElementById("tour-line");
+  const list = document.getElementById("tour-real");
+  const back = document.getElementById("tour-back");
+  const next = document.getElementById("tour-next");
+  const lines = tourLines();
+  panel.hidden = tourStep === 0;
+  panel.classList.toggle("raised", tourStep === 5 || tourCard);
+  document.getElementById("banks").hidden = tourStep !== 0;
+  canvas.classList.toggle("tour-focus", tourStep === 5 && !tourSawTap && !tourCard);
+  canvas.tabIndex = tourStep === 5 && !tourCard ? 0 : -1;
+  if (tourStep === 5 && !tourCard) canvas.setAttribute("aria-label", "Tap the picture to measure the proton");
+  else canvas.removeAttribute("aria-label");
+  for (const button of orbs.children) {
+    button.classList.toggle("tour-focus", tourStep === 4 && button.textContent === active);
+  }
+  if (!tourSawTap || tourStep !== 5 || tourCard) {
+    document.getElementById("grain").classList.remove("tour-focus");
+  }
+  if (tourStep === 0) return;
+  if (tourCard) {
+    count.hidden = true;
+    title.hidden = false;
+    line.hidden = true;
+    list.hidden = false;
+    list.replaceChildren();
+    const superscripts = "⁰¹²³⁴⁵⁶⁷⁸⁹";
+    const exponent = String(timeExponent).replace(/[0-9]/g, (digit) => superscripts[Number(digit)]);
+    [
+      "This is a real physics simulation.",
+      "Time is slowed about 10" + exponent + " times.",
+      "The sound is an artistic mapping.",
+      "Measurements come from Moth Atlas on a simulator, not hardware.",
+    ].forEach((text) => {
+      const item = document.createElement("li");
+      item.textContent = text;
+      list.appendChild(item);
+    });
+    back.disabled = false;
+    next.textContent = "Close";
+    if (moveFocus) title.focus();
+    return;
+  }
+  count.hidden = false;
+  title.hidden = true;
+  line.hidden = false;
+  list.hidden = true;
+  count.textContent = tourStep + " of 5";
+  line.textContent = lines[tourStep - 1];
+  back.disabled = tourStep === 1;
+  next.textContent = "Next";
+  if (moveFocus) line.focus();
+}
+
+function showTourStep(step) {
+  clearTourTimers();
+  tourCard = false;
+  tourStep = step;
+  if (step === 3) startTourAudio();
+  if (step === 4) {
+    selectIsotope("H");
+    tourTimers.push(setTimeout(() => {
+      if (tourStep !== 4) return;
+      selectIsotope("D");
+      paintTour(false);
+    }, 5000));
+    tourTimers.push(setTimeout(() => {
+      if (tourStep !== 4) return;
+      selectIsotope("T");
+      paintTour(false);
+    }, 12000));
+  }
+  if (step === 5) tourSawTap = false;
+  paintTour(true);
+}
+
+function openTour() {
+  const overlay = document.getElementById("intro");
+  if (overlay) overlay.hidden = true;
+  const begin = document.getElementById("begin");
+  begin.disabled = false;
+  window.__introDone = true;
+  showTourStep(1);
+}
+
+function closeTour() {
+  clearTourTimers();
+  tourStep = 0;
+  tourCard = false;
+  tourSawTap = false;
+  paintTour();
+}
+
+document.getElementById("tour-open").addEventListener("click", (event) => {
+  event.stopPropagation();
+  openTour();
+});
+document.getElementById("tour").addEventListener("pointerdown", (event) => {
+  event.stopPropagation();
+});
+document.getElementById("tour-back").addEventListener("click", (event) => {
+  event.stopPropagation();
+  if (tourCard) showTourStep(5);
+  else if (tourStep > 1) showTourStep(tourStep - 1);
+});
+document.getElementById("tour-next").addEventListener("click", (event) => {
+  event.stopPropagation();
+  if (tourCard) closeTour();
+  else if (tourStep < 5) showTourStep(tourStep + 1);
+  else {
+    clearTourTimers();
+    tourCard = true;
+    paintTour(true);
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (!tourStep) return;
+  const inSlider = event.target && event.target.id === "grain-slider";
+  if (inSlider) return;
+  if (event.key === "Escape") {
+    closeTour();
+    return;
+  }
+  if (event.key === "ArrowRight") {
+    event.preventDefault();
+    document.getElementById("tour-next").click();
+  } else if (event.key === "ArrowLeft" && !document.getElementById("tour-back").disabled) {
+    event.preventDefault();
+    document.getElementById("tour-back").click();
+  }
+});
+
 function startIntro() {
+  if (wantsGuided()) {
+    openTour();
+    return;
+  }
   const panels = introPanels(INTRO);
   const begin = document.getElementById("begin");
   window.__introDone = !panels;

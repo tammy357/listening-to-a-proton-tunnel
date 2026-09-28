@@ -79,9 +79,23 @@ def main() -> None:
         _render_experience()
 
 
+def _guided_requested() -> bool:
+    value = st.query_params.get("guided", "")
+    if isinstance(value, (list, tuple)):
+        value = value[0] if value else ""
+    return str(value) == "1"
+
+
+def _experience_html(root: Path) -> str:
+    document = _experience_document(_experience_stamp(root))
+    if _guided_requested():
+        document = document.replace("<body>", '<body data-guided="1">', 1)
+    return document
+
+
 def _render_experience() -> None:
     root = Path(__file__).resolve().parent
-    components.html(_experience_document(_experience_stamp(root)), height=1100, scrolling=False)
+    components.html(_experience_html(root), height=1100, scrolling=False)
 
 
 def _experience_stamp(root: Path) -> tuple:
@@ -254,7 +268,7 @@ def _render_lab() -> None:
     st.markdown("<p class='piece-title'>Listening to a proton tunnel</p>", unsafe_allow_html=True)
     controls = _sidebar()
     root = Path(__file__).resolve().parent
-    components.html(_experience_document(_experience_stamp(root)), height=400, scrolling=False)
+    components.html(_experience_html(root), height=400, scrolling=False)
 
     try:
         sim = _simulate(

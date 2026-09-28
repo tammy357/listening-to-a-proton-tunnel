@@ -99,6 +99,10 @@ https://tammy357.github.io/listening-to-a-proton-tunnel/
 
 It holds the Experience, the dark notebook, the EP with players and liner notes, and the contact sheet. The repository is https://github.com/tammy357/listening-to-a-proton-tunnel.
 
+The guided tour for a general audience opens with `?guided=1`. That is the FQxI entry:
+
+https://tammy357.github.io/listening-to-a-proton-tunnel/experience.html?guided=1
+
 ## Layout
 
 | Path | Role |
