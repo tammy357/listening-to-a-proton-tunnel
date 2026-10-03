@@ -32,15 +32,17 @@ jupyter nbconvert --to html --HTMLExporter.theme=dark notebooks/moth_tunneling_w
 
 Physics checks: `python tests/test_physics.py`.
 
-## Hardware, once a QPU provider is granted
+## Hardware
 
-`tomography-api-v2` (moth-api v0.41.0) takes `provider_name` and `backend_name` as free strings. The schema names the defaults `aer` and `automatic`. It has no enum and no IBM device list. Pass whatever provider and backend Moth has granted:
+QPU access on this account runs on IBM Fez. `qpixl-v1` encoded the ideal acceptor curve and read it back there: Moth job `c54092b1-3bbd-4f61-9a6a-857737f62da4`, IBM job `db0n8njid5ic73eq2bag`, 4096 shots, dynamic range left raw. The record is `src/atlas_qpixl_ibm_fez.json`. The Experience and the Lab draw it in coral beside the exact curve and the Aer tomography. It is an encode and a read-back, not a Bloch-vector measurement, so it is not labelled coherence.
+
+`tomography-api-v2` (moth-api v0.41.0) still takes `provider_name` and `backend_name` as free strings. The schema names the defaults `aer` and `automatic`. During this session the engine accepted jobs and then returned `engine_timeout` without leaving `queued`, including a plain Aer circuit, so there is no hardware `|r|` yet. When that worker answers, the same command writes a sibling bank and leaves `src/atlas_bank.json` untouched:
 
 ```bash
 MOTH_API_KEY=your-key python src/atlas_tomography.py --backend PROVIDER/BACKEND
 ```
 
-`--backend aer` is the simulator default (`aer` / `automatic`). Every run writes `src/atlas_bank_<provider>_<backend>.json` and leaves `src/atlas_bank.json` untouched. The Experience, the Lab, and notebook section 03 plot every bank that is on disk, beside the ideal curve. Until a bank is marked hardware, the row reads `hardware run: pending QPU access`.
+`--backend aer` is the simulator default (`aer` / `automatic`). Every tomography run writes `src/atlas_bank_<provider>_<backend>.json`. The pages plot every bank on disk beside the ideal curve. The grey row `hardware run: pending QPU access` is only shown when neither a hardware tomography bank nor the Fez read-back is on disk.
 
 ## Engines and job ids
 
@@ -75,7 +77,7 @@ This is a model double well, barrier 0.15 eV, wells 0.35 Å apart, on 256 grid s
 
 It is not an enzyme rate. Soybean lipoxygenase and alcohol dehydrogenase are the reason a proton tunnel is worth listening to. PDB 1HED, when it loads, is a picture of an active site. The zinc–water distance is not an input to the Hamiltonian.
 
-It is not a hardware coherence plot. The saved tomography bank is Aer, a simulator. `|r|` leaving 1 there is shot noise. The sentence on the Lab plot stays: on a noiseless simulator, deviations from `|r| = 1` are sampling noise, not decoherence. The word coherence is reserved for a real QPU. `fake_fez` would be labelled emulated device noise. No such bank is on disk yet.
+The saved tomography bank is Aer, a simulator. `|r|` leaving 1 there is shot noise. The sentence on the Lab plot stays: on a noiseless simulator, deviations from `|r| = 1` are sampling noise, not decoherence. The word coherence is reserved for a tomography run on a real QPU. The coral curve is the acceptor populations read back from IBM Fez. `fake_fez` would be labelled emulated device noise. No such tomography bank is on disk yet.
 
 The grains in Exposures are samples of the exact `|ψ|²` at `t = T/4`. There is no section 09, and no Atlas shot record over the 256 positions, so they are not Moth Atlas shots.
 
@@ -83,9 +85,9 @@ The echo's delays come from a chain of qubits, not from the proton. The measurem
 
 ## Notes for the Moth team
 
-The tomography schema is the piece that blocks a hardware caption. `provider_name` and `backend_name` are free strings. The only values the document names are `aer` and `automatic`. Other engines list `ibm_fez` and `fake_fez`. Tomography does not, so this project does not invent a device name for it.
+The tomography schema still does not name a device. `provider_name` and `backend_name` are free strings. The only values the document names are `aer` and `automatic`. `qpixl-v1` does name `mode: qpu` and a backend, and the live run used `ibm_fez`.
 
-When a QPU provider is available, the command above writes a sibling bank. The pages already plot every `src/atlas_bank_*.json` next to the ideal curve and the Aer run. A result is labelled coherence only when the run is classified as hardware (`qpu_job_id` present, and the provider is not `aer`). An emulated backend whose name starts with `fake_` is labelled emulated device noise.
+A tomography result is labelled coherence only when the run is classified as hardware (`qpu_job_id` present, and the provider is not `aer`). An emulated backend whose name starts with `fake_` is labelled emulated device noise. The Fez qpixl curve is labelled as a QPU read-back.
 
 Aer `|r|` at 4096 shots should stay described as shot noise. Please don't read those deviations as decoherence.
 
@@ -115,6 +117,7 @@ https://tammy357.github.io/listening-to-a-proton-tunnel/experience.html?guided=1
 | `src/experience.html` | Canvas and Web Audio player |
 | `src/atlas_tomography.py` | `tomography-api-v2`, with `--backend` |
 | `src/atlas_bank.json` | The Aer simulator bank. Not overwritten |
+| `src/atlas_qpixl_ibm_fez.json` | Acceptor curve read back from IBM Fez |
 | `src/exposures.py` | Contact sheet and developing films |
 | `exposures/` | `contact_sheet.png` and `developing_H.mp4`, `_D`, `_T` |
 | `src/atlas_music.py` | Round trip, QRC, Blur, echo, and the EP split |

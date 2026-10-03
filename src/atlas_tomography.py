@@ -141,6 +141,23 @@ def hardware_pending(banks: list[dict] | None = None) -> bool:
     return not any(str(bank.get("execution", "")).lower() == "hardware" for bank in banks)
 
 
+def load_qpixl_readback(folder: Path | None = None) -> dict | None:
+    """IBM Fez encode/read of the acceptor curve, if that file is on disk.
+
+    This is ``qpixl-v1`` on ``ibm_fez``, not tomography. Callers must not
+    label it coherence.
+    """
+
+    folder = folder or CANONICAL_BANK.parent
+    path = folder / "atlas_qpixl_ibm_fez.json"
+    if not path.exists():
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("backend") != "ibm_fez" or payload.get("engine") != "qpixl-v1":
+        raise RuntimeError(f"{path.name} is not the Fez qpixl read-back.")
+    return payload
+
+
 def level_ratios() -> dict[str, float]:
     """Return ``(E2 - E1) / (E1 - E0)`` for H, D, and T at the default well."""
 

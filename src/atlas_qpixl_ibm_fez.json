@@ -1,0 +1,160 @@
+{
+  "engine": "qpixl-v1",
+  "provider": "ibm",
+  "backend": "ibm_fez",
+  "mode": "qpu",
+  "execution": "hardware",
+  "shots": 4096,
+  "dynamic_range": "none",
+  "date": "2026-10-03T21:33:19+00:00",
+  "job_id": "c54092b1-3bbd-4f61-9a6a-857737f62da4",
+  "ibm_job_id": "db0n8njid5ic73eq2bag",
+  "qpu_seconds": 3,
+  "note": "Ideal acceptor populations, clipped into [0.02, 0.98], encoded by qpixl-v1 and read back from IBM Fez. This is not state tomography. The word coherence is reserved for a tomography Bloch length.",
+  "points": [
+    {
+      "index": 0,
+      "t_over_period": 0.0,
+      "sent": 0.02,
+      "readback": 0.2957617163567324
+    },
+    {
+      "index": 1,
+      "t_over_period": 0.041667,
+      "sent": 0.034937,
+      "readback": 0.2275787886484147
+    },
+    {
+      "index": 2,
+      "t_over_period": 0.083333,
+      "sent": 0.083036,
+      "readback": 0.28935680179865825
+    },
+    {
+      "index": 3,
+      "t_over_period": 0.125,
+      "sent": 0.15955,
+      "readback": 0.26785472025499507
+    },
+    {
+      "index": 4,
+      "t_over_period": 0.166667,
+      "sent": 0.259266,
+      "readback": 0.2536655574829334
+    },
+    {
+      "index": 5,
+      "t_over_period": 0.208333,
+      "sent": 0.375387,
+      "readback": 0.3751282182082138
+    },
+    {
+      "index": 6,
+      "t_over_period": 0.25,
+      "sent": 0.5,
+      "readback": 0.47579229640958176
+    },
+    {
+      "index": 7,
+      "t_over_period": 0.291667,
+      "sent": 0.624613,
+      "readback": 0.5898902055415709
+    },
+    {
+      "index": 8,
+      "t_over_period": 0.333333,
+      "sent": 0.740734,
+      "readback": 0.6746236353307633
+    },
+    {
+      "index": 9,
+      "t_over_period": 0.375,
+      "sent": 0.84045,
+      "readback": 0.7421219983133521
+    },
+    {
+      "index": 10,
+      "t_over_period": 0.416667,
+      "sent": 0.916964,
+      "readback": 0.7685639083374547
+    },
+    {
+      "index": 11,
+      "t_over_period": 0.458333,
+      "sent": 0.965063,
+      "readback": 0.7936682611141932
+    },
+    {
+      "index": 12,
+      "t_over_period": 0.5,
+      "sent": 0.98,
+      "readback": 0.8216224532494412
+    },
+    {
+      "index": 13,
+      "t_over_period": 0.541667,
+      "sent": 0.965063,
+      "readback": 0.8390897336888887
+    },
+    {
+      "index": 14,
+      "t_over_period": 0.583333,
+      "sent": 0.916964,
+      "readback": 0.8384612034993458
+    },
+    {
+      "index": 15,
+      "t_over_period": 0.625,
+      "sent": 0.84045,
+      "readback": 0.7845173826179728
+    },
+    {
+      "index": 16,
+      "t_over_period": 0.666667,
+      "sent": 0.740734,
+      "readback": 0.679681204457782
+    },
+    {
+      "index": 17,
+      "t_over_period": 0.708333,
+      "sent": 0.624613,
+      "readback": 0.6060363060065812
+    },
+    {
+      "index": 18,
+      "t_over_period": 0.75,
+      "sent": 0.5,
+      "readback": 0.48691681103873596
+    },
+    {
+      "index": 19,
+      "t_over_period": 0.791667,
+      "sent": 0.375387,
+      "readback": 0.40892452970843685
+    },
+    {
+      "index": 20,
+      "t_over_period": 0.833333,
+      "sent": 0.259266,
+      "readback": 0.2997527098053249
+    },
+    {
+      "index": 21,
+      "t_over_period": 0.875,
+      "sent": 0.15955,
+      "readback": 0.2563881500456946
+    },
+    {
+      "index": 22,
+      "t_over_period": 0.916667,
+      "sent": 0.083036,
+      "readback": 0.19534067368385172
+    },
+    {
+      "index": 23,
+      "t_over_period": 0.958333,
+      "sent": 0.034937,
+      "readback": 0.15895919466747382
+    }
+  ]
+}

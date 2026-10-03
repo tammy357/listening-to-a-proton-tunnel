@@ -138,13 +138,17 @@ def _experience_document(stamp: tuple) -> str:
     bank = bank_path.read_text(encoding="utf-8")
     atlas_path = root / "src" / "atlas_bank.json"
     atlas = atlas_path.read_text(encoding="utf-8") if atlas_path.exists() else "null"
-    from src.atlas_tomography import hardware_pending, load_tomography_banks
+    from src.atlas_tomography import hardware_pending, load_qpixl_readback, load_tomography_banks
 
     saved_banks = []
     for saved in load_tomography_banks():
         saved_banks.append({key: value for key, value in saved.items() if key != "_path"})
     atlas_banks = json.dumps(
-        {"banks": saved_banks, "hardwarePending": hardware_pending(saved_banks)}
+        {
+            "banks": saved_banks,
+            "hardwarePending": hardware_pending(saved_banks),
+            "fezReadback": load_qpixl_readback(),
+        }
     )
     intro = _intro_frames_json(root / "atlas_outputs")
     piece = root / "notebooks" / "media" / "through_the_wall.wav"
@@ -359,14 +363,27 @@ Everything here ran on simulators, and the echo's physics belongs to its qubit c
 
 
 def _tomography_rows() -> None:
-    from src.atlas_tomography import HARDWARE_PENDING, hardware_pending, length_label, load_tomography_banks
+    from src.atlas_tomography import (
+        HARDWARE_PENDING,
+        hardware_pending,
+        length_label,
+        load_qpixl_readback,
+        load_tomography_banks,
+    )
 
     banks = load_tomography_banks()
     lines = []
     for bank in banks:
         label = f"{bank.get('provider')}/{bank.get('backend')} · {length_label(bank)}"
         lines.append(f"<p class='bank-row'>{html.escape(label)}</p>")
-    if hardware_pending(banks):
+    readback = load_qpixl_readback()
+    if readback:
+        ibm = readback.get("ibm_job_id") or ""
+        label = "ibm_fez · qpixl-v1 · acceptor curve read back from the QPU"
+        if ibm:
+            label += f" · IBM {ibm}"
+        lines.append(f"<p class='bank-row'>{html.escape(label)}</p>")
+    elif hardware_pending(banks):
         lines.append(f"<p class='bank-row pending'>{html.escape(HARDWARE_PENDING)}</p>")
     if lines:
         st.markdown("".join(lines), unsafe_allow_html=True)
@@ -748,9 +765,10 @@ def _atlas_figure() -> tuple[go.Figure | None, str, list[str]]:
             hovertemplate="t = %{x:.3f} T_tun<br>exact = %{y:.3f}<extra></extra>",
         )
     )
-    from src.atlas_tomography import length_label, load_tomography_banks
+    from src.atlas_tomography import length_label, load_qpixl_readback, load_tomography_banks
 
     banks = load_tomography_banks() or [bank]
+    readback = load_qpixl_readback()
     palette = [PLOT_ALT, "#e4a23a", "#3cbaa6", "#e07a5f"]
     for index, saved in enumerate(banks):
         saved_points = saved.get("points") or []
@@ -765,6 +783,18 @@ def _atlas_figure() -> tuple[go.Figure | None, str, list[str]]:
                 line={"color": palette[index % len(palette)], "width": 1.6},
                 marker={"size": 7, "color": palette[index % len(palette)]},
                 hovertemplate="t = %{x:.3f} T_tun<br>measured = %{y:.3f}<extra></extra>",
+            )
+        )
+    if readback and readback.get("points"):
+        figure.add_trace(
+            go.Scatter(
+                x=[float(point["t_over_period"]) for point in readback["points"]],
+                y=[float(point["readback"]) for point in readback["points"]],
+                name="ibm_fez · QPU read-back",
+                mode="lines+markers",
+                line={"color": "#ff6b4a", "width": 1.6},
+                marker={"size": 7, "color": "#ff6b4a"},
+                hovertemplate="t = %{x:.3f} T_tun<br>Fez read-back = %{y:.3f}<extra></extra>",
             )
         )
     simulator = _atlas_is_simulator(bank)
@@ -809,12 +839,24 @@ def _atlas_figure() -> tuple[go.Figure | None, str, list[str]]:
             "On a noiseless simulator, deviations from |r| = 1 are sampling noise, not decoherence. "
             "Acceptor population is (1 − z) / 2 from observables X, Y, Z."
         )
+        if readback:
+            note += (
+                f" IBM Fez read that acceptor curve back through qpixl-v1 "
+                f"({readback.get('shots')} shots, job {readback.get('job_id')}, "
+                f"IBM {readback.get('ibm_job_id')}). "
+                "The read-back is an encode of the curve, not tomography, so it is not labelled coherence."
+            )
     else:
         note = (
             f"{provider}/{backend} · {shots} shots at each of {len(points)} times. "
             "Acceptor population is (1 − z) / 2 from observables X, Y, Z."
         )
     jobs = [str(job_id) for job_id in bank.get("job_ids", [])]
+    if readback:
+        jobs.append(
+            "qpixl-v1 ibm_fez "
+            f"{readback.get('job_id')} IBM {readback.get('ibm_job_id')}"
+        )
     return figure, note, jobs
 
 
@@ -982,10 +1024,21 @@ def _atlas_panel() -> None:
         f"`{provider}` / `{backend}` · {bank.get('execution', 'simulator')} · "
         f"{bank.get('shots')} shots · `{bank.get('engine')}` · {bank.get('date')}"
     )
-    st.caption(
-        "aer is a simulator. The tomography-api-v2 schema does not list an IBM hardware provider, "
-        "so this page does not call the run a QPU."
-    )
+    from src.atlas_tomography import load_qpixl_readback
+
+    readback = load_qpixl_readback()
+    if readback:
+        st.caption(
+            "The aer row is a simulator. The coral curve is the same acceptor populations "
+            f"encoded and read back from IBM Fez by qpixl-v1 "
+            f"(job {readback.get('job_id')}, IBM {readback.get('ibm_job_id')}). "
+            "That read-back is not tomography, so it is not labelled coherence."
+        )
+    else:
+        st.caption(
+            "aer is a simulator. The tomography-api-v2 schema does not list an IBM hardware provider, "
+            "so this page does not call the run a QPU."
+        )
 
 
 def _potential_window(x_angstrom: np.ndarray, v_ev: np.ndarray) -> list[float]:

@@ -1517,13 +1517,20 @@ function drawBankPanel() {
   ["#9aa2ff", "#e4a23a", "#3cbaa6"].forEach((color, index) => {
     if (banks[index]) plotSeries(banks[index].points || [], color, "acceptor_population");
   });
+  const fez = BANKS.fezReadback;
+  if (fez && fez.points && fez.points.length) plotSeries(fez.points, "#ff6b4a", "readback");
   rows.textContent = "";
   banks.forEach((bank) => {
     const line = document.createElement("p");
     line.textContent = (bank.provider || "aer") + "/" + (bank.backend || "automatic") + " · " + bankSeriesLabel(bank);
     rows.appendChild(line);
   });
-  if (BANKS.hardwarePending) {
+  if (fez && fez.points && fez.points.length) {
+    const line = document.createElement("p");
+    const ibm = fez.ibm_job_id ? " · IBM " + fez.ibm_job_id : "";
+    line.textContent = "ibm_fez · qpixl-v1 · acceptor curve read back from the QPU" + ibm;
+    rows.appendChild(line);
+  } else if (BANKS.hardwarePending) {
     const line = document.createElement("p");
     line.className = "pending";
     line.textContent = "hardware run: pending QPU access";
