@@ -379,7 +379,7 @@ Everything here ran on simulators, and the echo's physics belongs to its qubit c
         """
     )
     st.markdown(
-        "Through the Wall, cover and pipeline by Lily S. Engines by Moth; Retrocausal Echo by Spencer Topel."
+        "Through the Wall, cover and pipeline by Tammy. Engines by Moth; Retrocausal Echo by Spencer Topel."
     )
 
     _section("07", "Exposures")

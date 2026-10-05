@@ -759,7 +759,7 @@ def liner_notes_markdown(tracks: list[dict] | None = None) -> str:
         "",
         "Cover: the proton's crossing, position across and time down, coloured by phase.",
         "",
-        "Through the Wall, cover and pipeline by Lily S. Engines by Moth; Retrocausal Echo by Spencer Topel.",
+        "Through the Wall, cover and pipeline by Tammy. Engines by Moth; Retrocausal Echo by Spencer Topel.",
         "",
         "I. Hydrogen · II. Deuterium · III. Tritium · Coda",
         "",

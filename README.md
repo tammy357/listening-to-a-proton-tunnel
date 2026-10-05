@@ -71,7 +71,7 @@ Tomography job ids, in time order:
 
 ## Credits
 
-Through the Wall, cover and pipeline by Lily S. Engines by Moth; Retrocausal Echo by Spencer Topel.
+Through the Wall, cover and pipeline by Tammy. Engines by Moth; Retrocausal Echo by Spencer Topel.
 
 ## What this is and isn't
 
