@@ -1,0 +1,28 @@
+{
+  "model": {
+    "sentence": "This well slows deuterium by about 5.3 times and tritium by about 19.3, because the tunneling splitting shrinks as the mass grows. Those are splitting ratios of this Hamiltonian, not measured enzyme rates."
+  },
+  "cases": [
+    {
+      "name": "Soybean lipoxygenase",
+      "move": "A hydrogen atom leaves a carbon–hydrogen bond in linoleic acid.",
+      "clue": "For the wild-type enzyme the hydrogen/deuterium rate ratio is about 81 at room temperature, and it barely changes when the temperature does.",
+      "source": "Knapp, Rickert, Klinman, J. Am. Chem. Soc. 2002, 124, 3865.",
+      "knob": "The enzyme samples a shorter donor–acceptor distance. On this page that knob is the well half-separation."
+    },
+    {
+      "name": "A heat-loving alcohol dehydrogenase",
+      "move": "A hydride shifts while the enzyme oxidises an alcohol.",
+      "clue": "Below about 30 °C the isotope effect stops depending on temperature. Above that, it starts to.",
+      "source": "Kohen, Cannio, Bartolucci, Klinman, Nature 1999, 399, 496.",
+      "knob": "That crossover is why temperature runs from 100 K to 400 K. This page does not refit the well to that enzyme."
+    },
+    {
+      "name": "Carbonic anhydrase II",
+      "move": "A proton leaves zinc-bound water and travels to His64 along a wire of waters.",
+      "clue": "PDB 1HED is a picture of that active site. The zinc–water distance is not an input to the potential.",
+      "source": "Silverman and Lindskog, Acc. Chem. Res. 1988, 21, 30.",
+      "knob": "The enzyme is why a proton tunnel is worth listening to. The sound is the model well."
+    }
+  ]
+}

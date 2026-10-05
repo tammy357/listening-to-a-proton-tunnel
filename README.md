@@ -36,6 +36,8 @@ Physics checks: `python tests/test_physics.py`.
 
 QPU access on this account runs on IBM Fez. `qpixl-v1` encoded the ideal acceptor curve and read it back there: Moth job `c54092b1-3bbd-4f61-9a6a-857737f62da4`, IBM job `db0n8njid5ic73eq2bag`, 4096 shots, dynamic range left raw. The record is `src/atlas_qpixl_ibm_fez.json`. The Experience and the Lab draw it in coral beside the exact curve and the Aer tomography. It is an encode and a read-back, not a Bloch-vector measurement, so it is not labelled coherence.
 
+`comet-qrng-v1` also ran on IBM Fez: Moth job `4d67a48d-10cb-4132-97f6-b5415b32dfa5`, IBM job `db1o4rqvog1s73fie2ng`, 1024 shots, 2 seconds on the QPU. The tap coin is the 12 randomness qubits from that run, saved in `src/atlas_qrng_ibm_fez.json`. The Toeplitz extractor returned 0 bits, because a counts-only readout has no shot order, so the coin is the shot record and not certified extractor output. CHSH S = 2.598 is a fidelity witness on that chip, not device-independent certification. Witness qubits stay out of the coin. The odds of the two wells still come from the Aer tomography.
+
 `tomography-api-v2` (moth-api v0.41.0) still takes `provider_name` and `backend_name` as free strings. The schema names the defaults `aer` and `automatic`. During this session the engine accepted jobs and then returned `engine_timeout` without leaving `queued`, including a plain Aer circuit, so there is no hardware `|r|` yet. When that worker answers, the same command writes a sibling bank and leaves `src/atlas_bank.json` untouched:
 
 ```bash
@@ -77,7 +79,7 @@ This is a model double well, barrier 0.15 eV, wells 0.35 Å apart, on 256 grid s
 
 It is not an enzyme rate. Soybean lipoxygenase and alcohol dehydrogenase are the reason a proton tunnel is worth listening to. PDB 1HED, when it loads, is a picture of an active site. The zinc–water distance is not an input to the Hamiltonian.
 
-The saved tomography bank is Aer, a simulator. `|r|` leaving 1 there is shot noise. The sentence on the Lab plot stays: on a noiseless simulator, deviations from `|r| = 1` are sampling noise, not decoherence. The word coherence is reserved for a tomography run on a real QPU. The coral curve is the acceptor populations read back from IBM Fez. `fake_fez` would be labelled emulated device noise. No such tomography bank is on disk yet.
+The saved tomography bank is Aer, a simulator. `|r|` leaving 1 there is shot noise. The sentence on the Lab plot stays: on a noiseless simulator, deviations from `|r| = 1` are sampling noise, not decoherence. The word coherence is reserved for a tomography run on a real QPU. The coral curve is the acceptor populations read back from IBM Fez. The tap coin, when `src/atlas_qrng_ibm_fez.json` is present, is that device's 12 randomness qubits. The odds of the two wells still come from the Aer tomography. `fake_fez` would be labelled emulated device noise. No hardware tomography bank is on disk yet.
 
 The grains in Exposures are samples of the exact `|ψ|²` at `t = T/4`. There is no section 09, and no Atlas shot record over the 256 positions, so they are not Moth Atlas shots.
 

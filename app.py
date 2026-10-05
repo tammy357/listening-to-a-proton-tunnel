@@ -138,7 +138,7 @@ def _experience_document(stamp: tuple) -> str:
     bank = bank_path.read_text(encoding="utf-8")
     atlas_path = root / "src" / "atlas_bank.json"
     atlas = atlas_path.read_text(encoding="utf-8") if atlas_path.exists() else "null"
-    from src.atlas_tomography import hardware_pending, load_qpixl_readback, load_tomography_banks
+    from src.atlas_tomography import hardware_pending, load_fez_bits, load_qpixl_readback, load_tomography_banks
 
     saved_banks = []
     for saved in load_tomography_banks():
@@ -148,6 +148,7 @@ def _experience_document(stamp: tuple) -> str:
             "banks": saved_banks,
             "hardwarePending": hardware_pending(saved_banks),
             "fezReadback": load_qpixl_readback(),
+            "fezBits": load_fez_bits(),
         }
     )
     intro = _intro_frames_json(root / "atlas_outputs")
@@ -162,6 +163,7 @@ def _experience_document(stamp: tuple) -> str:
         ("__BANK_DATA__", bank),
         ("__ATLAS_BANK__", atlas),
         ("__ATLAS_BANKS__", atlas_banks),
+        ("__BIO__", (root / "src" / "quantum_bio.json").read_text(encoding="utf-8")),
         ("__INTRO_FRAMES__", intro),
         ("__WALL_AUDIO__", wall_audio),
         ("__WALL_COVER__", wall_cover),
@@ -268,6 +270,27 @@ def _pipeline() -> None:
     )
 
 
+def _enzyme_cases(root: Path) -> None:
+    path = root / "src" / "quantum_bio.json"
+    if not path.exists():
+        return
+    bio = json.loads(path.read_text(encoding="utf-8"))
+    st.markdown("## The enzymes")
+    sentence = (bio.get("model") or {}).get("sentence")
+    if sentence:
+        st.markdown(sentence)
+    columns = st.columns(3)
+    for column, case in zip(columns, bio.get("cases") or []):
+        with column:
+            st.markdown(f"**{case.get('name', '')}**")
+            st.markdown(case.get("move", ""))
+            st.markdown(case.get("clue", ""))
+            st.markdown(case.get("knob", ""))
+            source = case.get("source")
+            if source:
+                st.caption(source)
+
+
 def _render_lab() -> None:
     st.markdown("<p class='piece-title'>Listening to a proton tunnel</p>", unsafe_allow_html=True)
     controls = _sidebar()
@@ -292,9 +315,10 @@ def _render_lab() -> None:
 
 Many data sonifications map numbers to notes one at a time. Here the sound and the pictures come from the physics itself. The rhythm you hear is the tunneling period, so swapping hydrogen for deuterium or tritium slows it down by the real ratios, about 5.3 and 19.3 times. That slowing is the kinetic isotope effect, and in this notebook you can hear it.
 
-The proton is also treated as what it really is at this scale: a qubit. Atlas measures its state at twenty-four moments along the crossing, and those measurements decide where the proton lands when you tap to observe it. This follows the same tomography-then-expectation-values pattern Moth uses in Quantum Graph. And because Tessa treats every colour as a point on the qubit sphere, the proton's measured states can be shown as their own true colours.
+The proton is also treated as what it really is at this scale: a qubit. Atlas measures its state at twenty-four moments along the crossing, and those measurements set the odds of each well when you tap. The coin is a recorded sample of the 12 randomness qubits on IBM Fez. A quiet second voice follows the acceptor curve after Fez read it back.
         """
     )
+    _enzyme_cases(root)
     _section("01", "The wall")
     time_index = _time_slider(sim)
     _chart(_potential_figure(sim, time_index))

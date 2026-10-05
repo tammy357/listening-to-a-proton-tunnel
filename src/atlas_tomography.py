@@ -158,6 +158,25 @@ def load_qpixl_readback(folder: Path | None = None) -> dict | None:
     return payload
 
 
+def load_fez_bits(folder: Path | None = None) -> dict | None:
+    """Recorded IBM Fez bits from ``comet-qrng-v1``, if that file is on disk.
+
+    The bits are the coin for a tap. They are not the tunneling odds.
+    """
+
+    folder = folder or CANONICAL_BANK.parent
+    path = folder / "atlas_qrng_ibm_fez.json"
+    if not path.exists():
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("engine") != "comet-qrng-v1" or payload.get("backend") != "ibm_fez":
+        raise RuntimeError(f"{path.name} is not the Fez random-bit sample.")
+    bits = payload.get("bits")
+    if not isinstance(bits, list) or len(bits) < 8:
+        raise RuntimeError(f"{path.name} has no usable bit string.")
+    return payload
+
+
 def level_ratios() -> dict[str, float]:
     """Return ``(E2 - E1) / (E1 - E0)`` for H, D, and T at the default well."""
 

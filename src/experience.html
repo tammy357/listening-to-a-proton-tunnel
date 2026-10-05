@@ -58,7 +58,7 @@
     gap: 8px;
     justify-content: flex-end;
   }
-  #begin, #tour-open {
+  #begin, #tour-open, #bio-open {
     border: 1px solid #1f2a8a;
     background: #141428;
     color: #e4e2ff;
@@ -70,7 +70,7 @@
     cursor: pointer;
   }
   #begin:disabled { opacity: 0.7; cursor: default; }
-  #begin:focus-visible, #tour-open:focus-visible, #tour button:focus-visible, .orb:focus-visible {
+  #begin:focus-visible, #tour-open:focus-visible, #bio-open:focus-visible, #tour button:focus-visible, #bio button:focus-visible, .orb:focus-visible {
     outline: 3px solid #f4f2ff;
     outline-offset: 2px;
   }
@@ -99,7 +99,56 @@
     color: #f4f2ff;
   }
   #tour.raised { bottom: auto; top: 62px; }
-  #tour[hidden], #tour [hidden] { display: none !important; }
+  #tour[hidden], #tour [hidden], #bio[hidden] { display: none !important; }
+  #bio {
+    position: absolute;
+    left: 10px;
+    right: 10px;
+    top: 62px;
+    z-index: 6;
+    max-height: min(72vh, 520px);
+    overflow: auto;
+    padding: 16px 16px 14px;
+    border: 1px solid #2b35c8;
+    border-radius: 18px;
+    background: rgba(11, 11, 13, 0.94);
+    color: #f4f2ff;
+  }
+  #bio-kicker {
+    margin: 0;
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    color: #9aa2ff;
+  }
+  #bio-title {
+    margin: 6px 0 0;
+    font-size: 1.35rem;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+  }
+  #bio-model {
+    margin: 10px 0 12px;
+    font-size: 1.05rem;
+    line-height: 1.45;
+  }
+  .bio-case { margin: 0 0 12px; }
+  .bio-case h3 {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 500;
+  }
+  .bio-case p { margin: 4px 0 0; font-size: 0.98rem; line-height: 1.4; }
+  .bio-case .source { color: #9aa2ff; font-size: 0.85rem; }
+  #bio-close {
+    border: 1px solid #1f2a8a;
+    background: #141428;
+    color: #e4e2ff;
+    border-radius: 999px;
+    padding: 8px 14px;
+    min-height: 44px;
+    font: 15px/1.2 ui-monospace, Menlo, Consolas, monospace;
+    cursor: pointer;
+  }
   #tour-count {
     margin: 0;
     font-size: 14px;
@@ -372,6 +421,7 @@
     <h1>Listening to a proton tunnel</h1>
     <span id="scale"></span>
     <div id="header-actions">
+      <button id="bio-open" type="button">Enzymes</button>
       <button id="tour-open" type="button">Guided tour</button>
       <button id="begin" type="button">Begin</button>
     </div>
@@ -420,6 +470,13 @@
     </div>
     <p id="grain-kind">sampling illustration</p>
   </div>
+  <section id="bio" hidden aria-labelledby="bio-title">
+    <p id="bio-kicker">Quantum biology</p>
+    <h2 id="bio-title" tabindex="-1">Why a proton tunnel is worth hearing</h2>
+    <p id="bio-model"></p>
+    <div id="bio-cases"></div>
+    <button id="bio-close" type="button">Close</button>
+  </section>
   <section id="tour" hidden aria-labelledby="tour-title tour-line">
     <p id="tour-count">1 of 5</p>
     <h2 id="tour-title" tabindex="-1" hidden>What's real, what's not</h2>
@@ -440,6 +497,7 @@
 <script id="bank-data" type="application/json">__BANK_DATA__</script>
 <script id="atlas-data" type="application/json">__ATLAS_BANK__</script>
 <script id="atlas-banks" type="application/json">__ATLAS_BANKS__</script>
+<script id="bio-data" type="application/json">__BIO__</script>
 <script id="intro-data" type="application/json">__INTRO_FRAMES__</script>
 <script id="wall-audio-data" type="text/plain">__WALL_AUDIO__</script>
 <script id="wall-cover-data" type="text/plain">__WALL_COVER__</script>
@@ -448,6 +506,8 @@ const DATA = JSON.parse(document.getElementById("experience-data").textContent);
 const BANK = JSON.parse(document.getElementById("bank-data").textContent);
 const ATLAS = JSON.parse(document.getElementById("atlas-data").textContent);
 const BANKS = JSON.parse(document.getElementById("atlas-banks").textContent);
+const BIO = JSON.parse(document.getElementById("bio-data").textContent);
+let fezDraws = 0;
 const INTRO = JSON.parse(document.getElementById("intro-data").textContent);
 const wallAudio = document.getElementById("wall-audio");
 const wallButton = document.getElementById("wall");
@@ -610,12 +670,44 @@ function pointIndex(frac, count) {
   return ((Math.round(frac * count) % count) + count) % count;
 }
 
+function fezPack() {
+  const pack = BANKS && BANKS.fezBits;
+  if (!pack || !Array.isArray(pack.bits) || pack.bits.length < 8) return null;
+  return pack;
+}
+
+function fezUniform() {
+  const pack = fezPack();
+  if (!pack) return null;
+  const width = Number(pack.width) || 8;
+  const nShots = Math.floor(pack.bits.length / width);
+  if (nShots < 1) return null;
+  const stride = Number(pack.stride) || 1;
+  const offset = Number(pack.offset) || 0;
+  const shot = ((offset + fezDraws * stride) % nShots + nShots) % nShots;
+  const start = shot * width;
+  let value = 0;
+  for (let i = 0; i < width; i++) {
+    value = (value << 1) | (pack.bits[start + i] ? 1 : 0);
+  }
+  const draw = fezDraws;
+  fezDraws += 1;
+  return {
+    unit: (value + 0.5) / (1 << width),
+    draw: draw,
+    replay: draw >= nShots,
+    ibm: pack.ibm_job_id || "",
+    backend: pack.backend || "ibm_fez",
+  };
+}
+
 function measure() {
   mix = 1;
   previous = active;
   const frac = periodFraction(active);
   const note = document.getElementById("collapse-note");
   let donorProb;
+  let odds = "";
   if (ATLAS && Array.isArray(ATLAS.points) && ATLAS.points.length) {
     const points = ATLAS.points;
     const sample = points[pointIndex(frac, points.length)];
@@ -623,7 +715,7 @@ function measure() {
     donorProb = mirrored[active] ? acceptor : (1 - acceptor);
     const provider = ATLAS.provider || "aer";
     const backend = ATLAS.backend || "automatic";
-    note.textContent = "collapse drawn from Moth Atlas · tomography · " + provider + "/" + backend;
+    odds = "odds from Atlas tomography · " + provider + "/" + backend;
   } else {
     const points = BANK.points;
     const counts = points[pointIndex(frac, points.length)].counts;
@@ -632,9 +724,20 @@ function measure() {
     const total = Math.max(1, n0 + n1);
     const donorCount = mirrored[active] ? n1 : n0;
     donorProb = donorCount / total;
-    note.textContent = "collapse drawn from " + BANK.source + " because atlas_bank.json is missing";
+    odds = "odds from " + BANK.source;
   }
-  const donorWell = Math.random() < donorProb;
+  const coin = fezUniform();
+  const donorWell = coin ? coin.unit < donorProb : Math.random() < donorProb;
+  if (coin) {
+    const replay = coin.replay ? " · replaying the sample" : "";
+    const caption = fezPack().caption
+      || ("Coin from " + coin.backend + " · comet-qrng-v1" + (coin.ibm ? " · IBM " + coin.ibm : ""));
+    note.textContent = odds + ". " + caption + " · draw " + (coin.draw + 1) + replay;
+  } else if (ATLAS && Array.isArray(ATLAS.points) && ATLAS.points.length) {
+    note.textContent = odds + ". Coin from the browser, until a Fez sample is loaded";
+  } else {
+    note.textContent = odds;
+  }
   mirrored[active] = !donorWell;
   clocks[active] = 0;
   flash = 1;
@@ -750,7 +853,10 @@ function tick(now) {
   const state = displayed(mix);
   state.e0 = currentE0();
   draw(state);
-  if (audio) followPan(state);
+  if (audio) {
+    followPan(state);
+    followChip(periodFraction(active), state.pan);
+  }
   if (!window.__experienceReady) window.__experienceReady = performance.now();
   requestAnimationFrame(tick);
 }
@@ -1569,8 +1675,8 @@ function tourLines() {
     "This glow shows where the proton might be. Brighter means more likely.",
     "It doesn't have enough energy to climb over this wall.",
     "In the quantum world, it can turn up on the other side anyway. This is tunnelling. Listen: it moves left to right.",
-    "Make it heavier and it tunnels far more slowly: " + spokenRatio("D") + " times slower, then " + spokenRatio("T") + " times slower.",
-    "Measuring it puts it in one place. Each tap uses a real measurement from Moth's quantum simulator. Measure more times and the wave appears.",
+    "Make it heavier and it tunnels far more slowly: " + spokenRatio("D") + " times slower, then " + spokenRatio("T") + " times slower. Soybean lipoxygenase's measured rate ratio is about 81. This well's splitting ratio is about 5.3.",
+    "Measuring it puts it in one place. The chance of each well comes from the simulator. The coin that picks the well is a sample from IBM Fez.",
   ];
 }
 
@@ -1625,11 +1731,19 @@ function paintTour(moveFocus) {
     list.replaceChildren();
     const superscripts = "⁰¹²³⁴⁵⁶⁷⁸⁹";
     const exponent = String(timeExponent).replace(/[0-9]/g, (digit) => superscripts[Number(digit)]);
+    const coin = fezPack()
+      ? (BANKS.fezBits.caption || "The coin for each tap is a recorded sample from IBM Fez.")
+      : "The coin for each tap is the browser's random number, until a Fez sample is loaded.";
+    const chip = BANKS.fezReadback && BANKS.fezReadback.points
+      ? "A quiet second voice follows the acceptor curve after Fez read it back. That roughness is the chip."
+      : "There is no Fez read-back loaded, so the second voice stays silent.";
     [
       "This is a real physics simulation.",
-      "Time is slowed about 10" + exponent + " times.",
-      "The sound is an artistic mapping.",
-      "Measurements come from Moth Atlas on a simulator, not hardware.",
+      "Time is slowed about 10" + exponent + " times. The pitch is an artistic mapping.",
+      "The odds of each well come from Atlas tomography on a simulator.",
+      coin,
+      chip,
+      "Soybean lipoxygenase's measured rate ratio is about 81. This well's splitting ratio is about 5.3.",
     ].forEach((text) => {
       const item = document.createElement("li");
       item.textContent = text;
@@ -1837,6 +1951,21 @@ function beginAudio() {
     partials.push(osc);
   }
 
+  let chip = null;
+  if (BANKS.fezReadback && BANKS.fezReadback.points && BANKS.fezReadback.points.length) {
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(146.83, ctx.currentTime);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    const pan = ctx.createStereoPanner();
+    osc.connect(gain);
+    gain.connect(pan);
+    pan.connect(master);
+    osc.start();
+    chip = { gain, pan };
+  }
+
   const bell = ctx.createOscillator();
   bell.type = "sine";
   bell.frequency.setValueAtTime(523.25, ctx.currentTime);
@@ -1854,7 +1983,7 @@ function beginAudio() {
   bell2Gain.connect(master);
   bell2.start();
 
-  audio = { ctx, master, panner, partials, bellGain, bell2Gain, noiseGain, beat: null };
+  audio = { ctx, master, panner, partials, bellGain, bell2Gain, noiseGain, beat: null, chip };
   retune(ctx.currentTime);
   if (wallIsPlaying()) {
     wallPausedLive = true;
@@ -1879,6 +2008,90 @@ function retune(now) {
     param.setTargetAtTime(freqs[i], now, 0.12);
   }
 }
+
+function fezLevel(frac) {
+  const points = BANKS.fezReadback && BANKS.fezReadback.points;
+  if (!points || !points.length) return null;
+  const x = ((frac % 1) + 1) % 1;
+  let previous = points[points.length - 1];
+  let next = points[0];
+  for (let i = 0; i < points.length; i++) {
+    if (Number(points[i].t_over_period) >= x) {
+      next = points[i];
+      previous = points[(i + points.length - 1) % points.length];
+      break;
+    }
+  }
+  const span = (Number(next.t_over_period) - Number(previous.t_over_period) + 1) % 1 || 1;
+  const into = (x - Number(previous.t_over_period) + 1) % 1;
+  const t = Math.min(1, into / span);
+  return Number(previous.readback) * (1 - t) + Number(next.readback) * t;
+}
+
+function followChip(frac, protonPan) {
+  if (!audio || !audio.chip) return;
+  const level = fezLevel(frac);
+  if (level == null || Number.isNaN(level)) return;
+  const now = audio.ctx.currentTime;
+  audio.chip.gain.gain.setTargetAtTime(0.012 + 0.06 * level, now, 0.08);
+  const side = Math.max(-1, Math.min(1, -protonPan * 0.85));
+  audio.chip.pan.pan.setTargetAtTime(side, now, 0.08);
+}
+
+function paintBio() {
+  const model = document.getElementById("bio-model");
+  const cases = document.getElementById("bio-cases");
+  if (!model || !cases || !BIO) return;
+  model.textContent = (BIO.model && BIO.model.sentence) || "";
+  cases.replaceChildren();
+  (BIO.cases || []).forEach((item) => {
+    const block = document.createElement("article");
+    block.className = "bio-case";
+    const title = document.createElement("h3");
+    title.textContent = item.name || "";
+    const move = document.createElement("p");
+    move.textContent = item.move || "";
+    const clue = document.createElement("p");
+    clue.textContent = item.clue || "";
+    const knob = document.createElement("p");
+    knob.textContent = item.knob || "";
+    const source = document.createElement("p");
+    source.className = "source";
+    source.textContent = item.source || "";
+    block.append(title, move, clue, knob, source);
+    cases.appendChild(block);
+  });
+}
+
+function setBio(open) {
+  const panel = document.getElementById("bio");
+  const opener = document.getElementById("bio-open");
+  if (!panel) return;
+  panel.hidden = !open;
+  if (opener) opener.setAttribute("aria-expanded", open ? "true" : "false");
+  if (open) {
+    paintBio();
+    const title = document.getElementById("bio-title");
+    if (title) title.focus();
+  }
+}
+
+(function setupBio() {
+  const opener = document.getElementById("bio-open");
+  const closer = document.getElementById("bio-close");
+  if (opener) opener.addEventListener("click", () => setBio(document.getElementById("bio").hidden));
+  if (closer) closer.addEventListener("click", () => {
+    setBio(false);
+    if (opener) opener.focus();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && document.getElementById("bio") && !document.getElementById("bio").hidden) {
+      setBio(false);
+      if (opener) opener.focus();
+    }
+  });
+  paintBio();
+})();
 
 function followPan(state) {
   const now = audio.ctx.currentTime;
